@@ -131,7 +131,7 @@ Nel riepilogo la famiglia comprende tutte le epoche selezionate della metrica co
 
 La famiglia non comprende metriche diverse o esecuzioni separate. Sign-flipping richiede simmetria dei residui sotto il nullo; lo scambio di etichette richiede scambiabilità tra gruppi. La selezione manuale e i flag non correggono questi presupposti.
 
-Novità: seed riproducibile, annullamento e invalidazione dei risultati quando cambiano dati/impostazioni; limite del carico di calcolo con messaggio esplicito. I grafici statistici mostrano medie per gruppo e IC 95% t (stessa tabella critica dell'originale), oltre ai p-value corretti. Il CSV riporta selezioni, normalizzazione, gruppi, seed e parametri del test. I grafici descrittivi mostrano invece media ± DS tra soggetti, come indicato in legenda.
+Novità: seed riproducibile, annullamento e invalidazione dei risultati quando cambiano dati/impostazioni; limite del carico di calcolo con messaggio esplicito. I grafici statistici mostrano medie per gruppo e IC 95% t (stessa tabella critica dell'originale), oltre ai p-value corretti. Il CSV riporta selezioni, normalizzazione, gruppi, seed e parametri del test. I grafici descrittivi delle time series mostrano media ± DS tra soggetti. Nel riepilogo temporale le barre mostrano la media tra soggetti con IC 95% t di Student; nelle analisi statistiche sono affiancate per gruppo. Gli IC non sono corretti per confronti multipli e non vengono mostrati con meno di due soggetti. I valori individuali restano visualizzabili tramite isolamento; tabella e CSV includono i limiti degli IC del riepilogo.
 
 ## Sviluppo e verifica
 

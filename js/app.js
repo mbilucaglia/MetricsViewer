@@ -74,13 +74,14 @@
   }
   const svgNS='http://www.w3.org/2000/svg';
   function svgEl(tag,attrs={},text){const e=document.createElementNS(svgNS,tag);for(const[k,v]of Object.entries(attrs))e.setAttribute(k,v);if(text!==undefined)e.textContent=text;return e;}
-  function plot(traces,{categories=null,xLabel='Tempo dall’inizio dell’epoca [s]',hover=null,target='chart',title=null}={}){
+  function plot(traces,{categories=null,xLabel='Tempo dall’inizio dell’epoca [s]',hover=null,target='chart',title=null,bars=false}={}){
     const chart=$(target);
     const w=900,h=410,p={l:65,r:25,t:25,b:70};
     let xmin=Infinity,xmax=-Infinity,ymin=Infinity,ymax=-Infinity;
     for(const tr of traces)for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i]))continue;const d=tr.band?.[i]||0;xmin=Math.min(xmin,tr.x[i]);xmax=Math.max(xmax,tr.x[i]);ymin=Math.min(ymin,tr.y[i]-d);ymax=Math.max(ymax,tr.y[i]+d);}
     if(!Number.isFinite(ymin)){chart.append(node('p','Nessun valore disponibile nell’intervallo selezionato.','empty-state'));return;}
-    if(categories){xmin=-0.4;xmax=categories.length-0.6;}else if(xmin===xmax){xmin-=.5;xmax+=.5;}
+    if(categories){xmin=-0.5;xmax=categories.length-0.5;}else if(xmin===xmax){xmin-=.5;xmax+=.5;}
+    if(bars){ymin=Math.min(0,ymin);ymax=Math.max(0,ymax);}
     const pad=(ymax-ymin)*.12||Math.max(Math.abs(ymax)*.1,1);ymin-=pad;ymax+=pad;
     const X=x=>p.l+(x-xmin)/(xmax-xmin)*(w-p.l-p.r),Y=y=>h-p.b-(y-ymin)/(ymax-ymin)*(h-p.t-p.b);
     const svg=svgEl('svg',{viewBox:`0 0 ${w} ${h}`,role:'img','aria-label':title||$('chartTitle').textContent});
@@ -88,14 +89,34 @@
     const ticks=categories?categories.map((c,i)=>[i,c]):Array.from({length:6},(_,i)=>{const x=xmin+(xmax-xmin)*i/5;return[x,fmt(x)];});
     for(const[x,label]of ticks){const t=svgEl('text',{x:X(x),y:h-p.b+24,'text-anchor':'middle'},label.length>22?label.slice(0,20)+'…':label);t.append(svgEl('title',{},label));svg.append(t);}
     svg.append(svgEl('text',{x:w/2,y:h-12,'text-anchor':'middle'},xLabel));
+    const barTraces=traces.filter(tr=>!tr.isolationOnly),individualBars=traces.filter(tr=>tr.isolationOnly);
+    if(bars)svg.append(svgEl('line',{x1:p.l,x2:w-p.r,y1:Y(0),y2:Y(0),stroke:'#8e87a8','stroke-width':1}));
     for(const tr of traces){
-      const traceLayer=svgEl('g',{'data-trace-subject':tr.subjectId||''});svg.append(traceLayer);
+      const traceLayer=svgEl('g',{'data-trace-subject':tr.subjectId||''});
+      if(tr.isolationOnly){traceLayer.dataset.isolationOnly='true';traceLayer.style.display='none';}
+      svg.append(traceLayer);
+      if(bars&&categories){
+        const peers=tr.isolationOnly?individualBars:barTraces,slot=peers.indexOf(tr),step=X(1)-X(0),width=Math.min(88,step*.7/Math.max(1,peers.length));
+        for(let i=0;i<tr.x.length;i++){
+          if(!C.finite(tr.y[i]))continue;
+          const x=X(tr.x[i])+(slot-(peers.length-1)/2)*width,y=Y(tr.y[i]),half=tr.band?.[i],n=tr.n?.[i];
+          const label=`${tr.name} · ${categories[i]}: ${fmt(tr.y[i])}${tr.band?(C.finite(half)?` · IC 95% [${fmt(tr.y[i]-half)}, ${fmt(tr.y[i]+half)}]`:' · IC 95% non disponibile (N < 2)'):''}${n!==undefined?` · N=${n}`:''}`;
+          const bar=svgEl('rect',{x:x-width*.43,y:Math.min(Y(0),y),width:width*.86,height:Math.max(.8,Math.abs(y-Y(0))),fill:tr.color,opacity:tr.isolationOnly?.9:.78,rx:2});
+          bar.append(svgEl('title',{},label));traceLayer.append(bar);
+          if(C.finite(half)){
+            const low=Y(tr.y[i]-half),high=Y(tr.y[i]+half),cap=Math.min(9,width*.3);
+            const error=svgEl('path',{d:`M${x},${low}V${high} M${x-cap},${low}H${x+cap} M${x-cap},${high}H${x+cap}`,fill:'none',stroke:tr.color,'stroke-width':2});
+            error.append(svgEl('title',{},label));traceLayer.append(error);
+          }
+        }
+        continue;
+      }
       if(tr.band && !categories){let run=[];const flush=()=>{if(run.length>1){const pts=run.map(i=>`${X(tr.x[i])},${Y(tr.y[i]+tr.band[i])}`).concat([...run].reverse().map(i=>`${X(tr.x[i])},${Y(tr.y[i]-tr.band[i])}`)).join(' ');traceLayer.append(svgEl('polygon',{points:pts,fill:tr.color,opacity:'.12'}));}run=[];};for(let i=0;i<tr.x.length;i++){if(C.finite(tr.y[i])&&C.finite(tr.band[i]))run.push(i);else flush();}flush();}
       if(!categories){let path='',open=false;for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i])){open=false;continue;}path+=`${open?'L':'M'}${X(tr.x[i])},${Y(tr.y[i])} `;open=true;}traceLayer.append(svgEl('path',{d:path,fill:'none',stroke:tr.color,'stroke-width':tr.bold?2.8:1.4,opacity:tr.bold?1:.7}));}
       if(categories||tr.x.length===1)for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i]))continue;const x=X(tr.x[i]),y=Y(tr.y[i]);if(tr.band&&C.finite(tr.band[i]))traceLayer.append(svgEl('line',{x1:x,x2:x,y1:Y(tr.y[i]-tr.band[i]),y2:Y(tr.y[i]+tr.band[i]),stroke:tr.color,'stroke-width':2}));const circle=svgEl('circle',{cx:x,cy:y,r:tr.bold?6:4,fill:tr.color,opacity:tr.bold?1:.65});circle.append(svgEl('title',{},`${tr.name}: ${fmt(tr.y[i])}`));traceLayer.append(circle);}
     }
     if(hover){svg.addEventListener('pointermove',event=>{const rect=svg.getBoundingClientRect(),x=xmin+((event.clientX-rect.left)/rect.width*w-p.l)/(w-p.l-p.r)*(xmax-xmin);$('tooltip').textContent=hover(x);$('tooltip').hidden=false;$('tooltip').style.left=Math.max(5,Math.min(event.clientX+12,window.innerWidth-320))+'px';$('tooltip').style.top=Math.max(5,Math.min(event.clientY+12,window.innerHeight-110))+'px';});svg.addEventListener('pointerleave',()=>{$('tooltip').hidden=true;});}
-    chart.append(svg);const legend=node('div',undefined,'legend');for(const tr of traces){const span=node('span'),dot=node('i');span.dataset.traceSubject=tr.subjectId||'';dot.style.background=tr.color;span.append(dot,document.createTextNode(tr.name));legend.append(span);}chart.append(legend);
+    chart.append(svg);const legend=node('div',undefined,'legend');for(const tr of traces){const span=node('span'),dot=node('i');span.dataset.traceSubject=tr.subjectId||'';if(tr.isolationOnly){span.dataset.isolationOnly='true';span.style.display='none';}dot.style.background=tr.color;span.append(dot,document.createTextNode(tr.name));legend.append(span);}chart.append(legend);
   }
   function table(headers,rows){const t=node('table'),head=node('thead'),tr=node('tr');headers.forEach(h=>tr.append(node('th',h)));head.append(tr);t.append(head);const body=node('tbody');rows.slice(0,500).forEach(row=>{const tr=node('tr');row.forEach(v=>tr.append(node('td',v)));body.append(tr);});t.append(body);$('results').append(t);if(rows.length>500)$('results').append(node('p','Anteprima: prime 500 righe. Il CSV contiene tutti i risultati.','panel-note'));}
   function setVisualIsolation(ids){
@@ -104,6 +125,7 @@
     const isolated=ids?.length?new Set(ids):null;
     for(const trace of $('chart').querySelectorAll('[data-trace-subject]')){
       const emphasized=isolated?.has(trace.dataset.traceSubject)||false;
+      if(trace.dataset.isolationOnly)trace.style.display=emphasized?'':'none';
       trace.style.opacity=isolated?(emphasized?'1':'0.10'):'';
       trace.classList.toggle('is-isolated',emphasized);
     }
@@ -149,12 +171,12 @@
       }else{
         const epochs=allEpochs().filter(e=>summaryEpochs.has(e)),method=$('aggregation').value,rows=[],stats=[];
         if(!epochs.length)throw new Error('Seleziona almeno un’epoca da confrontare.');
-        epochs.forEach(e=>{const items=prepared(records,e,metric,o,warnings);const values=[];for(const x of items){const a=C.aggregate(x.series,method,o.from,o.to,C.gapLimit(x.series,o.maxGap));if(a.value===null)warnings.push(`${x.r.subject} · ${e}: nessun riepilogo calcolabile nell’intervallo.`);else values.push(a.value);rows.push({...provenance,epoch:e,subject:x.r.subject,aggregation:method,value:a.value,n_samples:a.n,valid_duration_s:a.duration,baseline_n:x.stats?.n??'',baseline_center:x.stats?.center??'',baseline_scale:x.stats?.scale??'',max_gap:o.maxGap??'auto:3*native_median_step'});}stats.push({epoch:e,mean:C.mean(values),sd:C.sd(values),n:values.length});});
+        epochs.forEach(e=>{const items=prepared(records,e,metric,o,warnings);const values=[];for(const x of items){const a=C.aggregate(x.series,method,o.from,o.to,C.gapLimit(x.series,o.maxGap));if(a.value===null)warnings.push(`${x.r.subject} · ${e}: nessun riepilogo calcolabile nell’intervallo.`);else values.push(a.value);rows.push({...provenance,epoch:e,subject:x.r.subject,aggregation:method,value:a.value,n_samples:a.n,valid_duration_s:a.duration,baseline_n:x.stats?.n??'',baseline_center:x.stats?.center??'',baseline_scale:x.stats?.scale??'',max_gap:o.maxGap??'auto:3*native_median_step'});}stats.push({epoch:e,mean:C.mean(values),sd:C.sd(values),ci:MetricsAnalysis.ci95(values),n:values.length});});
         analysisInput={rows,epochs};
-        const traces=records.map(r=>({name:r.subject,subjectId:r.id,color:color(r),x:epochs.map((_,i)=>i),y:epochs.map(e=>rows.find(x=>x.subject===r.subject&&x.epoch===e)?.value??null)}));traces.push({name:'Media tra soggetti ± DS',color:'#312b79',bold:true,x:epochs.map((_,i)=>i),y:stats.map(s=>s.mean),band:stats.map(s=>s.sd)});
-        plot(traces,{categories:epochs,xLabel:'Epoca / stimolo'});table(['Epoca','Media tra soggetti','DS tra soggetti','N soggetti'],stats.map(s=>[s.epoch,fmt(s.mean),fmt(s.sd),s.n]));
-        $('chartNote').textContent=`${$('aggregation').selectedOptions[0].textContent} sui campioni originali normalizzati. Ogni punto piccolo è un soggetto; il punto grande è la media tra soggetti. Il CSV include risultati individuali e di gruppo.`;
-        exportRows=[...rows.map(r=>({row_type:'subject',...r,group_mean:null,group_sd:null,group_n:null})),...stats.map(s=>({row_type:'group',...provenance,epoch:s.epoch,subject:'',aggregation:method,value:null,n_samples:null,valid_duration_s:null,baseline_n:'',baseline_center:'',baseline_scale:'',max_gap:o.maxGap??'auto:3*native_median_step',group_mean:s.mean,group_sd:s.sd,group_n:s.n}))];
+        const traces=records.map(r=>({name:r.subject,subjectId:r.id,isolationOnly:true,color:color(r),x:epochs.map((_,i)=>i),y:epochs.map(e=>rows.find(x=>x.subject===r.subject&&x.epoch===e)?.value??null)}));traces.unshift({name:'Media tra soggetti · IC 95%',color:'#514691',bold:true,x:epochs.map((_,i)=>i),y:stats.map(s=>s.mean),band:stats.map(s=>s.ci),n:stats.map(s=>s.n)});
+        plot(traces,{categories:epochs,xLabel:'Epoca / stimolo',bars:true});table(['Epoca','Media tra soggetti','DS tra soggetti','IC 95% inferiore','IC 95% superiore','N soggetti'],stats.map(s=>[s.epoch,fmt(s.mean),fmt(s.sd),fmt(C.finite(s.ci)?s.mean-s.ci:null),fmt(C.finite(s.ci)?s.mean+s.ci:null),s.n]));
+        $('chartNote').textContent=`${$('aggregation').selectedOptions[0].textContent} sui campioni originali normalizzati. Le barre indicano la media tra soggetti; le error bar l’IC 95% della media (t di Student), non corretto per confronti multipli. Con meno di 2 soggetti l’IC non è disponibile. Usa ◎ per visualizzare i valori individuali. Il CSV include risultati individuali e di gruppo.`;
+        exportRows=[...rows.map(r=>({row_type:'subject',...r,group_mean:null,group_sd:null,group_ci95_lower:null,group_ci95_upper:null,group_n:null})),...stats.map(s=>({row_type:'group',...provenance,epoch:s.epoch,subject:'',aggregation:method,value:null,n_samples:null,valid_duration_s:null,baseline_n:'',baseline_center:'',baseline_scale:'',max_gap:o.maxGap??'auto:3*native_median_step',group_mean:s.mean,group_sd:s.sd,group_ci95_lower:C.finite(s.ci)?s.mean-s.ci:null,group_ci95_upper:C.finite(s.ci)?s.mean+s.ci:null,group_n:s.n}))];
       }
       $('export').disabled=!exportRows.length;
       document.dispatchEvent(new CustomEvent('metrics-ready',{detail:{mode,dataset,records,metric,epoch,o,analysisInput,exportRows,prepared,plot,render,setVisualIsolation}}));

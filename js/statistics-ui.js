@@ -113,7 +113,7 @@
       const summaryGroups=design==='one'?[{name:'Soggetti selezionati',subjects}]:groups.map((g,i)=>({name:g.name,subjects:subjects.filter(s=>s.groupIndex===i)}));
       const traces=summaryGroups.map((g,i)=>{const columns=matrix.times.map((_,j)=>g.subjects.map(s=>s.values[j]));return {name:`${g.name} (N=${g.subjects.length}) · IC 95%`,color:colors[i%colors.length],bold:true,x:matrix.times,y:columns.map(C.mean),band:columns.map(A.ci95)};});
       const categories=ctx.mode==='summary'?labels:null;
-      ctx.plot(traces,{target:'statsGroupPlot',title:'Medie dei gruppi e intervalli di confidenza al 95%',categories,xLabel:categories?'Epoca / stimolo':'Tempo [s]'});
+      ctx.plot(traces,{target:'statsGroupPlot',title:'Medie dei gruppi e intervalli di confidenza al 95%',categories,bars:!!categories,xLabel:categories?'Epoca / stimolo':'Tempo [s]'});
       ctx.plot([{name:'p corretto',color:'#312b79',bold:true,x:matrix.times,y:points.map(p=>p.pAdjusted)},{name:'Soglia 0,05',color:'#bd253b',x:matrix.times,y:matrix.times.map(()=>.05)}],{target:'statsPPlot',title:'P-value corretti',categories,xLabel:categories?'Epoca / stimolo':'Tempo [s]'});
       displayResults();$('exportStats').disabled=false;
       const omitted=ctx.mode==='series'?`${matrix.dropped} istanti incompleti omessi.`:`Soggetti incompleti esclusi: ${matrix.excluded.join(', ')||'nessuno'}.`;
