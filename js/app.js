@@ -167,7 +167,9 @@
       if(categories||tr.x.length===1)for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i]))continue;const x=X(tr.x[i]),y=Y(tr.y[i]);if(tr.band&&C.finite(tr.band[i]))traceLayer.append(svgEl('line',{x1:x,x2:x,y1:Y(tr.y[i]-tr.band[i]),y2:Y(tr.y[i]+tr.band[i]),stroke:tr.color,'stroke-width':2}));const circle=svgEl('circle',{cx:x,cy:y,r:tr.bold?6:4,fill:tr.color,opacity:tr.bold?1:.65});circle.append(svgEl('title',{},`${tr.name}: ${fmt(tr.y[i])}`));traceLayer.append(circle);}
     }
     if(hover){svg.addEventListener('pointermove',event=>{const rect=svg.getBoundingClientRect(),x=xmin+((event.clientX-rect.left)/rect.width*w-p.l)/(w-p.l-p.r)*(xmax-xmin);$('tooltip').textContent=hover(x);$('tooltip').hidden=false;$('tooltip').style.left=Math.max(5,Math.min(event.clientX+12,window.innerWidth-320))+'px';$('tooltip').style.top=Math.max(5,Math.min(event.clientY+12,window.innerHeight-110))+'px';});svg.addEventListener('pointerleave',()=>{$('tooltip').hidden=true;});}
-    chart.append(svg);const legend=node('div',undefined,'legend');for(const tr of traces){const span=node('span'),dot=node('i');span.dataset.traceSubject=tr.subjectId||'';if(tr.isolationOnly){span.dataset.isolationOnly='true';span.style.display='none';}dot.style.background=tr.color;span.append(dot,document.createTextNode(tr.name));legend.append(span);}chart.append(legend);
+    chart.append(svg);
+    if(!categories&&mode==='series')window.MetricsVideo?.attach(svg,{min:xmin,max:xmax,left:p.l,top:p.t,width:w-p.l-p.r,height:h-p.t-p.b});
+    const legend=node('div',undefined,'legend');for(const tr of traces){const span=node('span'),dot=node('i');span.dataset.traceSubject=tr.subjectId||'';if(tr.isolationOnly){span.dataset.isolationOnly='true';span.style.display='none';}dot.style.background=tr.color;span.append(dot,document.createTextNode(tr.name));legend.append(span);}chart.append(legend);
   }
   function table(headers,rows){const t=node('table'),head=node('thead'),tr=node('tr');headers.forEach(h=>tr.append(node('th',h)));head.append(tr);t.append(head);const body=node('tbody');rows.slice(0,500).forEach(row=>{const tr=node('tr');row.forEach(v=>tr.append(node('td',v)));body.append(tr);});t.append(body);$('results').append(t);if(rows.length>500)$('results').append(node('p','Anteprima: prime 500 righe. Il CSV contiene tutti i risultati.','panel-note'));}
   let visualIsolationIds=null;
@@ -195,6 +197,7 @@
     }).catch(error=>{$('errors').textContent=error.message;});
   }
   function renderNow(){
+    window.MetricsVideo?.setContext(dataset?allEpochs():[],$('epoch').value,mode);
     document.dispatchEvent(new CustomEvent('metrics-invalidated',{detail:{mode}}));
     if(forcedIndividuals)$('individuals').checked=false;
     let analysisInput=null;revealIndividualTraces=null;restoreIndividualTraces=null;forcedIndividuals=false;

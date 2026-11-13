@@ -19,6 +19,7 @@
   }
   function subview(){syncDesign();$('seriesModeControls').hidden=currentMode!=='series';$('summaryModeControls').hidden=currentMode!=='summary';const stats=subviews[currentMode]==='stats';$('visualPanel').hidden=stats;$('statsPanel').hidden=!stats;for(const [id,active]of [['viewTab',!stats],['statsTab',stats]]){$(id).classList.toggle('is-active',active);$(id).setAttribute('aria-pressed',String(active));}$('statsTitle').textContent=`Analisi statistiche · ${currentMode==='series'?'Time series':'Riepilogo temporale'}`;}
   function clearResults(message='Impostazioni aggiornate: esegui nuovamente l’analisi.'){
+    globalThis.MetricsSignificantMedia?.clear();
     version++;results=[];resultMeta=null;$('statsResults').replaceChildren();$('statsGroupPlot').replaceChildren();$('statsPPlot').replaceChildren();$('exportStats').disabled=true;$('cancelStats').disabled=true;$('runStats').disabled=!context;$('statsStatus').textContent=message;
   }
   function groupEditor(){
@@ -104,7 +105,7 @@
   $('addGroup').onclick=()=>{groups.push({id:`g${nextGroup}`,name:`Gruppo ${nextGroup++}`});clearResults();groupEditor();};
   $('cancelStats').onclick=()=>clearResults('Analisi annullata.');
   function displayResults(){
-    $('statsResults').replaceChildren();const visible=$('significantOnly').checked?results.filter(r=>r.pAdjusted<=.05):results;
+    $('statsResults').replaceChildren();const visible=$('significantOnly').checked?results.filter(r=>Number.isFinite(r.pAdjusted)&&r.pAdjusted<=.05):results;
     table('statsResults',[currentMode==='series'?'Tempo [s]':'Epoca / confronto','Test','Statistica','Differenza media A − B','p non corretto','p finale','Correzione','N'],visible.map(r=>[r.label,r.test||($('design').value==='one'?'t':'F'),fmt(r.statistic),fmt(r.meanDifference),fmt(r.pUncorrected),fmt(r.pAdjusted),r.correction||resultMeta?.correction||'',r.n]));
     if(!visible.length)$('statsResults').append(el('p','Nessun risultato con il filtro selezionato.','panel-note'));
   }
@@ -143,7 +144,7 @@
       ctx.plot(traces,{target:'statsGroupPlot',title:'Medie dei gruppi e intervalli di confidenza al 95%',categories,bars:!!categories,comparisons:within?repeated.comparisons:design==='multi'?posthoc:points.map((p,i)=>({...p,epochA:labels[i],epochB:labels[i],single:true,label:`${labels[i]} contro ${nullValue}`,correction:'max-|T| sulle epoche'})),xLabel:categories?'Epoca / stimolo':'Tempo [s]'});
       const pPoints=within?repeated.comparisons:points,pTimes=within?pPoints.map((_,i)=>i):matrix.times,pCategories=within?pPoints.map(p=>p.label):categories;
       ctx.plot([{name:within?(repeated.omnibus?'p post-hoc · max-|T|':'p appaiato'):'p corretto',color:'#312b79',bold:true,x:pTimes,y:pPoints.map(p=>p.pAdjusted)},{name:'Soglia 0,05',color:'#bd253b',x:pTimes,y:pTimes.map(()=>.05)}],{target:'statsPPlot',title:within?'Confronti appaiati tra epoche':'P-value corretti',categories:pCategories,xLabel:within?'Confronto A − B':categories?'Epoca / stimolo':'Tempo [s]'});
-      displayResults();$('exportStats').disabled=false;
+      displayResults();globalThis.MetricsSignificantMedia?.show(results,resultMeta);$('exportStats').disabled=false;
       const omitted=ctx.mode==='series'?`${matrix.dropped} istanti incompleti omessi.`:`Soggetti incompleti esclusi: ${matrix.excluded.join(', ')||'nessuno'}.`;
       $('statsStatus').textContent=`Completato: ${points.filter(p=>p.pAdjusted<=.05).length}/${points.length} risultati con p finale ≤ 0,05. N=${subjects.length}. ${omitted} ${posthoc.length?`${posthoc.filter(p=>p.pAdjusted<=.05).length}/${posthoc.length} post-hoc tra gruppi significativi (max-|T| congiunto su coppie × epoche).`:''} ${within?(repeated.omnibus?'Il p omnibus non richiede correzione; i post-hoc sono corretti max-|T| su tutte le coppie, anche se l’omnibus non è significativo.':'Un solo confronto appaiato: nessuna correzione multipla necessaria.'):''} I flag outlier non escludono automaticamente soggetti.`;
     }catch(e){if(ticket===version)$('statsStatus').textContent=e.message;}

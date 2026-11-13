@@ -809,3 +809,29 @@ footer {
 }
 
 .metrics-chart [data-significance] text { font-size: 18px; font-weight: 700; }
+
+.stimulus-video-card { margin-bottom: 18px; padding: 20px; }
+.stimulus-video-card summary { cursor: pointer; font-weight: 600; }
+.stimulus-video-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 1fr); gap: 24px; margin-top: 16px; }
+#stimulusVideo { display: block; width: 100%; max-height: 340px; background: #171524; border-radius: 8px; }
+#videoAssignments { max-height: 340px; overflow: auto; }
+.video-assignment { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 0; border-bottom: 1px solid #e7e5f1; }
+.video-assignment label { display: grid; gap: 6px; width: 100%; overflow-wrap: anywhere; }
+.video-assignment input { max-width: 100%; }
+.video-assignment span { overflow-wrap: anywhere; font-size: 12px; }
+@media (max-width: 700px) { .stimulus-video-layout { grid-template-columns: minmax(0, 1fr); } }
+
+.significant-interval { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.significant-interval span { flex: 1 1 100%; font-variant-numeric: tabular-nums; }
+
+#significantIntervals { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 18px; max-height: none; }
+.significant-interval { align-content: start; padding: 16px; border: 1px solid #e7e5f1; border-radius: 12px; background: #faf9fe; min-width: 0; }
+.significant-interval > span { font-weight: 600; color: #35305f; }
+.segment-player { width: 100%; min-width: 0; }
+.segment-player video { display: block; width: 100%; aspect-ratio: 16/9; object-fit: contain; background: #171524; border-radius: 8px; }
+.segment-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 10px; }
+.segment-controls input[type=range] { flex: 1 1 90px; min-width: 0; width: 90px; }
+.segment-controls input.segment-volume { flex: 0 1 65px; width: 65px; }
+.segment-controls output { font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.segment-volume-label { display: flex; align-items: center; gap: 8px; flex-basis: 100%; font-size: 12px; color: #625c76; }

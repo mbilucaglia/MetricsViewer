@@ -180,3 +180,23 @@ Nel riepilogo temporale, Scala verticale permette Auto oppure minimo/massimo per
 Il clic fuori dai controlli di isolamento e dai punti interattivi, oppure Escape, ripristina la vista dei soggetti. Nei grafici statistici del riepilogo le parentesi collegano le coppie significative: * p finale <= 0,05, ** <= 0,01, *** <= 0,001. Per i post-hoc si usano i p corretti max-|T|; il p omnibus non determina le parentesi. Le annotazioni restano sopra il grafico anche con scala Y personalizzata.
 
 Annotazioni statistiche del riepilogo: nel disegno entro soggetto le parentesi collegano epoche; per gruppi indipendenti collegano le barre dei gruppi nella stessa epoca; contro valore nullo compare un asterisco sulla singola barra. I post-hoc indipendenti usano statistiche t pooled a due code. A ogni permutazione le etichette di tutti i gruppi vengono riassegnate ai soggetti, conservando le numerosità; la stessa assegnazione vale in tutte le epoche. Il massimo |T| su tutte le coppie × tutte le epoche produce una sola distribuzione nulla e i p corretti, senza fattori Bonferroni. Anche i p grezzi provengono da questa permutazione globale. La famiglia dei post-hoc è separata dagli omnibus. Servono scambiabilità tra tutti i gruppi sotto il nullo globale e, per controllo forte sotto nulli parziali, la condizione di subset pivotality; distribuzioni o varianze diverse non sono automaticamente ammesse. B permutazioni congiunte per la fase post-hoc, non B per coppia. CSV: gruppi, epoche, differenza A-B, numerosità, p grezzo/finale e correzione.
+
+
+## Video sincronizzato
+
+Nella modalità **Time series**, apri **Associa video alle epoche** e scegli un video locale per ogni stimolo. Il lettore mostra automaticamente il video dell’epoca selezionata; puoi sostituire o rimuovere ogni associazione.
+
+Lo zero del video coincide con lo zero dell’epoca (secondi). Play, pausa e ricerca nel lettore aggiornano il cursore rosso nei grafici temporali della visualizzazione e delle analisi statistiche. Clicca nell’area di un grafico per cercare il tempo corrispondente; con il grafico a fuoco, le frecce destra/sinistra spostano il tempo di un secondo. La ricerca viene limitata alla durata del video. Fuori dall’intervallo visibile il cursore è nascosto.
+
+Il cambio di epoca riparte da zero; il riepilogo temporale mette in pausa e nasconde il video. Cambiare metrica o filtri mantiene il tempo. I video restano locali, non vengono esportati nel JSON/CSV e devono essere riassociati al ricaricamento della pagina. Usa un formato e codec supportato dal browser (ad esempio MP4 o WebM).
+
+
+### Momenti significativi e video
+
+Le tabelle statistiche mostrano per impostazione predefinita solo i risultati con **p finale ≤ 0,05**; togli la spunta per consultare tutti i risultati. Il CSV mantiene tutti i risultati e i p-value corretti.
+
+Dopo un’analisi Time series, **Momenti significativi nel video** raggruppa solo campioni significativi adiacenti sulla griglia originale; campioni non significativi o mancanti separano gli intervalli. Non è un test cluster-based e non implica significatività tra i campioni. Per ogni intervallo puoi andare al video, scaricare il **frame PNG al p minimo** o una **clip dal primo all’ultimo campione significativo**. Gli istanti isolati offrono il frame, senza inventare una durata significativa. Il riepilogo per epoca non produce intervalli temporali.
+
+Associa prima il video dell’epoca, oppure aggiungilo dopo l’analisi. L’estrazione usa un lettore separato e non sposta quello principale. Le clip sono ricodificate localmente, con audio originale, a circa 30 fps in WebM o MP4 secondo il browser; la registrazione richiede la durata della clip e la scheda deve restare visibile. È possibile annullarla. Un intervallo non coperto dalla durata del video viene segnalato e non esportato. I file portano metrica, epoca e tempi nel nome. Nessun video viene caricato su un server.
+
+Ogni intervallo dispone di un mini player con audio originale, play/pausa, ricerca limitata al segmento e volume. Parte un solo mini player alla volta. Gli istanti isolati mostrano un fotogramma con riproduzione disabilitata.

@@ -252,6 +252,24 @@
             Analisi statistiche
           </button>
         </nav>
+        <section id="videoCard" class="card stimulus-video-card" aria-labelledby="videoTitle">
+          <details open>
+            <summary id="videoTitle">Video sincronizzato · <span id="videoEpoch"></span></summary>
+            <div class="stimulus-video-layout">
+              <div>
+                <video id="stimulusVideo" controls playsinline preload="metadata" hidden aria-label="Video dello stimolo"></video>
+                <p id="videoEmpty" class="panel-note">Associa un video all’epoca selezionata.</p>
+                <p class="panel-note">Tempo: <output id="videoTime">0.00 s</output>. Clicca sui grafici temporali per spostare il video.</p>
+                <p id="videoError" role="status" class="panel-note"></p>
+              </div>
+              <details>
+                <summary>Associa video alle epoche</summary>
+                <p class="panel-note">Lo zero del video corrisponde all’inizio dell’epoca. I file rimangono nel browser e vanno riassociati dopo il ricaricamento.</p>
+                <div id="videoAssignments"></div>
+              </details>
+            </div>
+          </details>
+        </section>
         <div class="metrics-layout">
           <section
             class="card main-panel"
@@ -440,9 +458,17 @@
               class="metrics-chart"
             ></div>
             <label class="check-option"
-              ><input id="significantOnly" type="checkbox" /> Mostra solo
+              ><input id="significantOnly" type="checkbox" checked /> Mostra solo
               risultati con p finale ≤ 0,05</label
             >
+            <section id="significantMedia" hidden aria-labelledby="significantMediaTitle">
+              <h3 id="significantMediaTitle">Momenti significativi nel video</h3>
+              <p class="panel-note">Istanti consecutivi con p finale ≤ 0,05, raggruppati senza attraversare lacune. Ogni frame corrisponde al p minimo dell’intervallo. Un istante isolato produce un frame; le clip vanno dal primo all’ultimo istante significativo.</p>
+              <p class="panel-note">Clip con audio originale, ricodificate in tempo reale (circa 30 fps): mantieni la scheda visibile. Gli intervalli descrivono i campioni significativi, non un test statistico sull’intera clip. Il CSV delle analisi include tutti i punti per tracciabilità.</p>
+              <div id="significantIntervals"></div>
+              <p id="mediaStatus" role="status" aria-live="polite" class="panel-note"></p>
+              <button id="cancelMedia" type="button" hidden>Annulla estrazione</button>
+            </section>
             <div id="statsResults" class="results-table"></div>
           </section>
           <aside class="card sample-panel">
@@ -568,7 +594,9 @@
     <script src="js/analysis.js"></script>
     <script src="js/repeated.js"></script>
     <script src="js/isolation.js"></script>
+    <script src="js/significant-media.js"></script>
     <script src="js/statistics-ui.js"></script>
+    <script src="js/video.js"></script>
     <script src="js/app.js"></script>
     <script src="js/searchable-select.js"></script>
   </body>
