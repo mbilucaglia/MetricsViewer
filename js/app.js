@@ -98,19 +98,45 @@
     for(const[x,label]of ticks){const t=svgEl('text',{x:X(x),y:h-p.b+24,'text-anchor':'middle'},label.length>22?label.slice(0,20)+'…':label);t.append(svgEl('title',{},label));svg.append(t);}
     svg.append(svgEl('text',{x:w/2,y:h-12,'text-anchor':'middle'},xLabel));
     const clipId=`${target}-plot-clip`;const defs=svgEl('defs'),clip=svgEl('clipPath',{id:clipId});clip.append(svgEl('rect',{x:p.l,y:p.t,width:w-p.l-p.r,height:h-p.t-p.b}));defs.append(clip);svg.append(defs);
-    const barTraces=traces.filter(tr=>!tr.isolationOnly),individualBars=traces.filter(tr=>tr.isolationOnly);
+    const barTraces=traces.filter(tr=>!tr.subjectId),individualBars=traces.filter(tr=>tr.isolationOnly);
     if(bars&&ymin<=0&&ymax>=0)svg.append(svgEl('line',{x1:p.l,x2:w-p.r,y1:Y(0),y2:Y(0),stroke:'#8e87a8','stroke-width':1}));
+    const swarmPositions=new Map();
+    if(categories){
+      for(let i=0;i<categories.length;i++){
+        const points=traces.filter(t=>t.swarm&&C.finite(t.y[i])).map(t=>({t,y:Y(t.y[i])})).sort((a,b)=>a.y-b.y||a.t.name.localeCompare(b.t.name));
+        const placed=[];
+        for(const point of points){
+          const candidates=[0];
+          for(const q of placed){const dy=point.y-q.y;if(Math.abs(dy)<9){const dx=Math.sqrt(81-dy*dy);candidates.push(q.dx-dx,q.dx+dx);}}
+          candidates.sort((a,b)=>Math.abs(a)-Math.abs(b)||a-b);
+          point.dx=candidates.find(dx=>placed.every(q=>(dx-q.dx)**2+(point.y-q.y)**2>=81-1e-7))??0;placed.push(point);
+        }
+        const extent=Math.max(4,...placed.map(q=>Math.abs(q.dx)+4)),scale=Math.min(1,(X(1)-X(0))*.32/extent);
+        for(const q of placed){if(!swarmPositions.has(q.t))swarmPositions.set(q.t,[]);swarmPositions.get(q.t)[i]={dx:q.dx*scale,r:4*scale};}
+      }
+    }
     for(const tr of traces){
       const traceLayer=svgEl('g',{'data-trace-subject':tr.subjectId||''});
       if(bars)traceLayer.setAttribute('clip-path',`url(#${clipId})`);
       if(tr.isolationOnly){traceLayer.dataset.isolationOnly='true';traceLayer.style.display='none';}
       svg.append(traceLayer);
+      if(tr.swarm&&categories){
+        for(let i=0;i<tr.x.length;i++){
+          if(!C.finite(tr.y[i]))continue;
+          const point=swarmPositions.get(tr)[i],label=`${tr.name} · ${categories[i]}: ${fmt(tr.y[i])}`;
+          const circle=svgEl('circle',{cx:X(tr.x[i])+point.dx,cy:Y(tr.y[i]),r:point.r,fill:tr.color,stroke:'white','stroke-width':.6,tabindex:0,role:'button','aria-label':`Evidenzia ${label}`});
+          circle.append(svgEl('title',{},label));circle.style.cursor='pointer';
+          const select=()=>document.dispatchEvent(new CustomEvent('metrics-isolate-subject',{detail:{id:tr.subjectId}}));
+          circle.addEventListener('click',select);circle.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select();}});traceLayer.append(circle);
+        }
+        continue;
+      }
       if(bars&&categories){
         const peers=tr.isolationOnly?individualBars:barTraces,slot=peers.indexOf(tr),step=X(1)-X(0),width=Math.min(88,step*.7/Math.max(1,peers.length));
         for(let i=0;i<tr.x.length;i++){
           if(!C.finite(tr.y[i]))continue;
           const x=X(tr.x[i])+(slot-(peers.length-1)/2)*width,y=Y(tr.y[i]),half=tr.band?.[i],n=tr.n?.[i];
-          const label=`${tr.name} · ${categories[i]}: ${fmt(tr.y[i])}${tr.band?(C.finite(half)?` · IC 95% [${fmt(tr.y[i]-half)}, ${fmt(tr.y[i]+half)}]`:' · IC 95% non disponibile (N < 2)'):''}${n!==undefined?` · N=${n}`:''}`;
+          const label=`${tr.name} · ${categories[i]}: ${fmt(tr.y[i])}${tr.band?(C.finite(half)?` · ${tr.bandLabel||'IC 95%'} [${fmt(tr.y[i]-half)}, ${fmt(tr.y[i]+half)}]`:` · ${tr.bandLabel||'IC 95%'} non disponibile (N < 2)`):''}${n!==undefined?` · N=${n}`:''}`;
           const bar=svgEl('rect',{x:x-width*.43,y:Math.min(Y(0),y),width:width*.86,height:Math.max(.8,Math.abs(y-Y(0))),fill:tr.color,opacity:tr.isolationOnly?.9:.78,rx:2});
           bar.append(svgEl('title',{},label));traceLayer.append(bar);
           if(C.finite(half)){
@@ -185,9 +211,9 @@
         if(!epochs.length)throw new Error('Seleziona almeno un’epoca da confrontare.');
         epochs.forEach(e=>{const items=prepared(records,e,metric,o,warnings);const values=[];for(const x of items){const a=C.aggregate(x.series,method,o.from,o.to,C.gapLimit(x.series,o.maxGap));if(a.value===null)warnings.push(`${x.r.subject} · ${e}: nessun riepilogo calcolabile nell’intervallo.`);else values.push(a.value);rows.push({...provenance,epoch:e,subject:x.r.subject,aggregation:method,value:a.value,n_samples:a.n,valid_duration_s:a.duration,baseline_n:x.stats?.n??'',baseline_center:x.stats?.center??'',baseline_scale:x.stats?.scale??'',max_gap:o.maxGap??'auto:3*native_median_step'});}stats.push({epoch:e,mean:C.mean(values),sd:C.sd(values),ci:MetricsAnalysis.ci95(values),n:values.length});});
         analysisInput={rows,epochs};
-        const traces=records.map(r=>({name:r.subject,subjectId:r.id,isolationOnly:true,color:color(r),x:epochs.map((_,i)=>i),y:epochs.map(e=>rows.find(x=>x.subject===r.subject&&x.epoch===e)?.value??null)}));traces.unshift({name:'Media tra soggetti · IC 95%',color:'#514691',bold:true,x:epochs.map((_,i)=>i),y:stats.map(s=>s.mean),band:stats.map(s=>s.ci),n:stats.map(s=>s.n)});
+        const traces=records.map(r=>({name:r.subject,subjectId:r.id,swarm:true,isolationOnly:!$('individuals').checked,color:color(r),x:epochs.map((_,i)=>i),y:epochs.map(e=>rows.find(x=>x.subject===r.subject&&x.epoch===e)?.value??null)}));if($('average').checked)traces.unshift({name:'Media tra soggetti ± DS',bandLabel:'± DS',color:'#514691',bold:true,x:epochs.map((_,i)=>i),y:stats.map(s=>s.mean),band:stats.map(s=>s.sd),n:stats.map(s=>s.n)});
         plot(traces,{categories:epochs,xLabel:'Epoca / stimolo',bars:true});table(['Epoca','Media tra soggetti','DS tra soggetti','IC 95% inferiore','IC 95% superiore','N soggetti'],stats.map(s=>[s.epoch,fmt(s.mean),fmt(s.sd),fmt(C.finite(s.ci)?s.mean-s.ci:null),fmt(C.finite(s.ci)?s.mean+s.ci:null),s.n]));
-        $('chartNote').textContent=`${$('aggregation').selectedOptions[0].textContent} sui campioni originali normalizzati. Le barre indicano la media tra soggetti; le error bar l’IC 95% della media (t di Student), non corretto per confronti multipli. Con meno di 2 soggetti l’IC non è disponibile. Usa ◎ per visualizzare i valori individuali. Il CSV include risultati individuali e di gruppo.`;
+        $('chartNote').textContent=`${$('aggregation').selectedOptions[0].textContent} sui campioni originali normalizzati. Soggetti: beeswarm dei riepiloghi individuali; clicca un punto oppure ◎ per evidenziare il soggetto in tutte le epoche. Media ± DS: barre con deviazione standard tra soggetti. Con meno di 2 soggetti la DS non è disponibile. Il CSV include risultati individuali e di gruppo.`;
         exportRows=[...rows.map(r=>({row_type:'subject',...r,group_mean:null,group_sd:null,group_ci95_lower:null,group_ci95_upper:null,group_n:null})),...stats.map(s=>({row_type:'group',...provenance,epoch:s.epoch,subject:'',aggregation:method,value:null,n_samples:null,valid_duration_s:null,baseline_n:'',baseline_center:'',baseline_scale:'',max_gap:o.maxGap??'auto:3*native_median_step',group_mean:s.mean,group_sd:s.sd,group_ci95_lower:C.finite(s.ci)?s.mean-s.ci:null,group_ci95_upper:C.finite(s.ci)?s.mean+s.ci:null,group_n:s.n}))];
       }
       $('export').disabled=!exportRows.length;

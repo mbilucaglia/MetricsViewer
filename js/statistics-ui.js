@@ -90,6 +90,7 @@
   });
   $('viewTab').onclick=()=>{subviews[currentMode]='view';subview();};$('statsTab').onclick=()=>{subviews[currentMode]='stats';subview();};
   $('isolateOutliers').onclick=()=>{if(!context)return;isolation.toggleOutliers();subviews[currentMode]='view';subview();updateIsolationControls(context);};
+  document.addEventListener('metrics-isolate-subject',e=>{if(!context)return;isolation.toggleSubject(e.detail.id);updateIsolationControls(context);});
   $('restoreIsolation').onclick=()=>{isolation.reset();if(context)updateIsolationControls(context);};
   function refreshOutlierFeedback(){if(!context)return;const ctx=context;return MetricsBusy.run('Ricerca degli outlier in corso…',async()=>updateOutliers(ctx)).catch(error=>{$('outlierContext').textContent=error.message;});}
   $('outlierSeries').onchange=refreshOutlierFeedback;$('outlierSummary').onchange=refreshOutlierFeedback;
