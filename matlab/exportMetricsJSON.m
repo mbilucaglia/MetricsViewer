@@ -1,16 +1,19 @@
 function dataset = exportMetricsJSON(inputData, outputFile, options)
 %EXPORTMETRICSJSON Export metric structs to Metrics Viewer JSON (schema v1).
-%   exportMetricsJSON opens MAT-file, subject and destination dialogs.
-%   exportMetricsJSON(S) selects subjects from S and asks where to save.
+%   exportMetricsJSON opens MAT-file and destination dialogs (all loaded subjects).
+%   exportMetricsJSON(S) exports all subjects from S and asks where to save.
 %   D = exportMetricsJSON(S, "metrics.json") exports without dialogs.
 %   S can be a scalar struct, struct array, or cell array of structs.
 %   D = exportMetricsJSON(S, "", Interactive=false) returns data without saving.
-%   exportMetricsJSON(S, "out.json", Interactive=true) selects subjects first.
+%   exportMetricsJSON(S, "out.json", Interactive=true) uses all supplied subjects.
 %
 %   Required fields: subject, epoch_id, metrics, metrics_time. Each metric
 %   contains one cell per epoch, with matching real numeric time/value vectors.
 %   Times are seconds relative to epoch onset; Fs is intentionally unused.
-%   NaN/Inf values become JSON null; nonfinite times are rejected. Empty metric
+%   A scalar NaN metric is unavailable: it becomes an empty series, and epochs
+%   containing only unavailable metrics are omitted. Subjects with no remaining
+%   epochs are omitted; if none remain, no file is written. Other NaN/Inf values
+%   become JSON null; nonfinite times are rejected. Empty metric
 %   vectors are retained. No normalization, aggregation or resampling occurs.
 %   One recording per subject and unique epoch labels are required. Cancelling
 %   any dialog returns [] and does not create or overwrite a file.
@@ -21,7 +24,6 @@ arguments
     options.Interactive (1,1) logical = strlength(string(outputFile)) == 0
 end
 dataset = [];
-sources = strings(0,1);
 if isempty(inputData)
     if ~options.Interactive
         error('MetricsViewer:EmptyInput', 'No metric structs supplied.');
@@ -42,28 +44,14 @@ if isempty(inputData)
             loaded = load(filePath, variableName);
             found = collectStructs(loaded.(variableName));
             candidates = [candidates; found]; %#ok<AGROW>
-            sources = [sources; repmat(names(fileIndex) + " / " + variableName, numel(found), 1)]; %#ok<AGROW>
         end
     end
 else
     candidates = collectStructs(inputData);
-    sources = repmat("input", numel(candidates), 1);
 end
 if isempty(candidates)
     error('MetricsViewer:EmptyInput', ...
         'No structs with subject, epoch_id, metrics and metrics_time found.');
-end
-if options.Interactive
-    labels = strings(numel(candidates),1);
-    for index = 1:numel(candidates)
-        labels(index) = textScalar(candidates{index}.subject, 'subject') + " — " + sources(index);
-    end
-    [chosen, accepted] = listdlg('ListString', cellstr(labels), ...
-        'SelectionMode', 'multiple', 'InitialValue', 1:numel(labels), ...
-        'PromptString', 'Select subjects to include in the JSON', ...
-        'Name', 'Metrics Viewer — subjects', 'ListSize', [640 340]);
-    if ~accepted || isempty(chosen), return; end
-    candidates = candidates(chosen);
 end
 records = cell(1,numel(candidates));
 subjects = strings(1,numel(candidates));
@@ -74,6 +62,14 @@ end
 if numel(unique(subjects)) ~= numel(subjects)
     error('MetricsViewer:DuplicateSubject', ...
         'Duplicate subjects selected. Choose one recording per subject.');
+end
+keep = cellfun(@(r) ~isempty(r.epochs), records);
+if any(~keep)
+    fprintf('Metrics Viewer: omitted %d subjects without usable epochs.\n', sum(~keep));
+end
+records = records(keep);
+if isempty(records)
+    error('MetricsViewer:NoUsableEpochs', 'No usable epochs remain: all metrics are unavailable.');
 end
 result = struct('schema_version', 1, 'time_unit', 's', 'recordings', {records});
 if options.Interactive && strlength(string(outputFile)) == 0
@@ -139,8 +135,11 @@ if isempty(names) || ~isequal(sort(names), sort(fieldnames(s.metrics_time)))
     error('MetricsViewer:Metrics', '%s: metrics and metrics_time must have the same nonempty fields.', subject);
 end
 epochs = cell(1,numel(ids));
+keepEpoch = true(1,numel(ids));
 for epochIndex = 1:numel(ids)
     metrics = struct();
+    missingPlaceholder = false;
+    hasSamples = false;
     for metricIndex = 1:numel(names)
         name = names{metricIndex};
         valuesByEpoch = s.metrics.(name);
@@ -156,9 +155,17 @@ for epochIndex = 1:numel(ids)
         end
         times = double(times(:).');
         values = double(values(:).');
+        % A scalar NaN marks a metric that could not be computed (short epoch).
+        if isscalar(values) && isnan(values) && isscalar(times) && ...
+                (isnan(times) || (isfinite(times) && times >= 0))
+            metrics.(name) = struct('time', [], 'values', []);
+            missingPlaceholder = true;
+            continue;
+        end
         if any(~isfinite(times)) || any(times < 0) || any(diff(times) <= 0)
             error('MetricsViewer:Times', '%s/%s/%s: times must be finite, nonnegative and strictly increasing.', subject, ids(epochIndex), name);
         end
+        hasSamples = hasSamples || ~isempty(values);
         values(~isfinite(values)) = NaN;
         % Numeric vectors serialize much faster than one cell per sample.
         % Only scalars need wrapping to preserve the JSON array shape.
@@ -166,8 +173,13 @@ for epochIndex = 1:numel(ids)
         if isscalar(values), values = {values}; end
         metrics.(name) = struct('time', {times}, 'values', {values});
     end
+    keepEpoch(epochIndex) = ~(missingPlaceholder && ~hasSamples);
     epochs{epochIndex} = struct('id', ids(epochIndex), 'metrics', metrics);
 end
+if any(~keepEpoch)
+    fprintf('Metrics Viewer: %s: omitted %d unavailable epochs.\n', subject, sum(~keepEpoch));
+end
+epochs = epochs(keepEpoch);
 metadata = struct();
 for name = ["date", "origin"]
     if isfield(s,name)

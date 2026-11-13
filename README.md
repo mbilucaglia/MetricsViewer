@@ -17,20 +17,19 @@ exportMetricsJSON
 ```
 
 1. Selezionare uno o più file MAT. Sono riconosciute variabili struct, array di struct e cell array di struct, incluso `cell_out`.
-2. Nella finestra successiva selezionare i soggetti da includere (Ctrl/Shift per selezioni multiple). Il nome del file e della variabile distingue le sorgenti.
-3. Scegliere nome e cartella del JSON.
+2. Scegliere nome e cartella del JSON. Tutti i soggetti caricati vengono inclusi senza una seconda selezione.
 
 Annullare una finestra interrompe l'operazione senza scrivere file. Si deve scegliere una sola registrazione per soggetto. L'export conserva i campioni e i tempi, non applica normalizzazione o aggregazione.
 
 Per partire da variabili già presenti nel workspace:
 
 ```matlab
-exportMetricsJSON(S)                      % selezione soggetti e salvataggio
+exportMetricsJSON(S)                      % tutti i soggetti forniti e salvataggio
 exportMetricsJSON({S1, S2, S3})           % nessun cellarray aggregato preliminare necessario
 exportMetricsJSON(S, "subject.json")     % senza finestre
 exportMetricsJSON(cell_out, "group.json") % senza finestre
 D = exportMetricsJSON(S, "", Interactive=false); % restituisce il dataset, non salva
-exportMetricsJSON(cell_out, "group.json", Interactive=true); % selezione soggetti
+exportMetricsJSON(cell_out, "group.json", Interactive=true); % tutti i soggetti forniti
 ```
 
 Richiede MATLAB R2021a o successivo, senza toolbox aggiuntivi. Verificato con R2025b.
@@ -162,3 +161,5 @@ Misura dell’esportatore ottimizzato sul dataset di sei soggetti (49.383 campio
 Un popup modale indica le fasi di lettura e verifica dei JSON, preparazione dei grafici, ricerca outlier ed esportazione CSV. Le elaborazioni di dataset grandi (almeno 20.000 campioni della metrica o 100 registrazioni) mostrano anche le fasi di normalizzazione e allineamento. Il browser riceve tempo per disegnare il popup prima dei calcoli. I passaggi sincroni più costosi possono comunque occupare il thread principale; non viene mostrata una percentuale inventata.
 
 Nei test statistici l’avanzamento mostra il numero effettivo di permutazioni completate. Il pulsante Annulla analisi (o Escape) interrompe il test al successivo blocco di permutazioni. Il popup si chiude anche in caso di errore e riporta il focus al controllo precedente.
+
+L’esportatore include tutti i soggetti dei file selezionati, senza una seconda lista di selezione. Una metrica rappresentata da un singolo NaN (epoca troppo corta) viene esportata come serie vuota; se nell’epoca restano solo metriche non disponibili, l’epoca viene omessa per quel soggetto. I soggetti senza epoche restanti vengono omessi; se non rimane alcun soggetto, l’esportazione termina con un messaggio senza scrivere il file. Il numero di epoche omesse viene riportato nella Command Window.
