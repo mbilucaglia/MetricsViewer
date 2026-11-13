@@ -154,7 +154,7 @@ assertSuccess(results)
 
 I dati reali di ricerca non sono inclusi nella repository. `private-data/` e i MAT sono esclusi da Git.
 
-Misura dell’esportatore ottimizzato sul dataset di sei soggetti (49.383 campioni): conversione e salvataggio locale da 0,8251 s a 0,1342 s (circa 6,15×), escludendo caricamento MAT e finestre di dialogo. Il JSON decodificato resta identico.
+L’esportatore parte dalla versione fornita dall’utente: usa `jsonencode` e mostra barre di avanzamento per lettura MAT, conversione e scrittura. Le barre si chiudono anche in caso di errore o annullamento; `Progress=false` le disabilita. Le misure della precedente implementazione non si applicano a questa versione.
 
 ## Avanzamento delle operazioni
 
