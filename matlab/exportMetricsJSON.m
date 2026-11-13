@@ -90,7 +90,7 @@ if strlength(string(outputFile)) > 0
     end
     if folder == "", folder = string(pwd); end
     if ~isfolder(folder), error('MetricsViewer:OutputFolder', 'Output folder does not exist.'); end
-    json = jsonencode(result, 'PrettyPrint', true, 'ConvertInfAndNaN', true);
+    json = encodeDataset(result);
     temporary = string(tempname(folder)) + ".json";
     cleanup = onCleanup(@() removeTemporary(temporary));
     [fid,message] = fopen(temporary, 'w', 'n', 'UTF-8');
@@ -160,8 +160,11 @@ for epochIndex = 1:numel(ids)
             error('MetricsViewer:Times', '%s/%s/%s: times must be finite, nonnegative and strictly increasing.', subject, ids(epochIndex), name);
         end
         values(~isfinite(values)) = NaN;
-        % Cells guarantee JSON arrays even for zero or one sample.
-        metrics.(name) = struct('time', {num2cell(times)}, 'values', {num2cell(values)});
+        % Numeric vectors serialize much faster than one cell per sample.
+        % Only scalars need wrapping to preserve the JSON array shape.
+        if isscalar(times), times = {times}; end
+        if isscalar(values), values = {values}; end
+        metrics.(name) = struct('time', {times}, 'values', {values});
     end
     epochs{epochIndex} = struct('id', ids(epochIndex), 'metrics', metrics);
 end
@@ -194,4 +197,48 @@ end
 
 function removeTemporary(path)
 if isfile(path), delete(path); end
+end
+
+function json = encodeDataset(dataset)
+% Encode numeric arrays in bulk; jsonencode still handles all text escaping.
+records = dataset.recordings;
+recordJSON = cell(size(records));
+for recordIndex = 1:numel(records)
+    record = records{recordIndex};
+    epochs = record.epochs;
+    epochJSON = cell(size(epochs));
+    names = fieldnames(epochs{1}.metrics);
+    encodedNames = cellfun(@jsonencode, names, 'UniformOutput', false);
+    for epochIndex = 1:numel(epochs)
+        epoch = epochs{epochIndex};
+        metricJSON = cell(size(names));
+        for metricIndex = 1:numel(names)
+            series = epoch.metrics.(names{metricIndex});
+            metricJSON{metricIndex} = [encodedNames{metricIndex}, ...
+                ':{"time":', encodeVector(series.time), ...
+                ',"values":', encodeVector(series.values), '}'];
+        end
+        epochJSON{epochIndex} = ['      {"id":', jsonencode(epoch.id), ...
+            ',"metrics":{', strjoin(metricJSON, ','), '}}'];
+    end
+    recordJSON{recordIndex} = ['    {"id":', jsonencode(record.id), ...
+        ',"subject":', jsonencode(record.subject), ...
+        ',"metadata":', jsonencode(record.metadata), ...
+        ',"epochs":[', newline, strjoin(epochJSON, [',', newline]), ...
+        newline, '    ]}'];
+end
+json = ['{"schema_version":1,"time_unit":"s","recordings":[', ...
+    newline, strjoin(recordJSON, [',', newline]), newline, ']}'];
+end
+
+function json = encodeVector(values)
+if iscell(values), values = cell2mat(values); end
+if isempty(values)
+    json = '[]';
+    return;
+end
+% 17 significant digits preserve the exact IEEE double on round trip.
+numbers = sprintf('%.17g,', values);
+numbers(end) = [];
+json = ['[', strrep(numbers, 'NaN', 'null'), ']'];
 end
