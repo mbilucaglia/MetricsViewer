@@ -81,7 +81,8 @@
   $('viewTab').onclick=()=>{subviews[currentMode]='view';subview();};$('statsTab').onclick=()=>{subviews[currentMode]='stats';subview();};
   $('isolateOutliers').onclick=()=>{if(!context)return;isolation.toggleOutliers();subviews[currentMode]='view';subview();updateIsolationControls(context);};
   $('restoreIsolation').onclick=()=>{isolation.reset();if(context)updateIsolationControls(context);};
-  $('outlierSeries').onchange=()=>{if(context)updateOutliers(context);};$('outlierSummary').onchange=()=>{if(context)updateOutliers(context);};
+  function refreshOutlierFeedback(){if(!context)return;const ctx=context;return MetricsBusy.run('Ricerca degli outlier in corso…',async()=>updateOutliers(ctx)).catch(error=>{$('outlierContext').textContent=error.message;});}
+  $('outlierSeries').onchange=refreshOutlierFeedback;$('outlierSummary').onchange=refreshOutlierFeedback;
   $('design').onchange=()=>{clearResults();groupEditor();};for(const id of ['nullValue','permutations','seed'])$(id).onchange=()=>clearResults();
   $('addGroup').onclick=()=>{groups.push({id:`g${nextGroup}`,name:`Gruppo ${nextGroup++}`});clearResults();groupEditor();};
   $('cancelStats').onclick=()=>clearResults('Analisi annullata.');
@@ -93,7 +94,9 @@
   $('significantOnly').onchange=displayResults;
   $('runStats').onclick=async()=>{
     if(!context)return;const ctx=context;clearResults('Preparazione dei test…');const ticket=version,design=$('design').value,permutations=Number($('permutations').value),nullValue=Number($('nullValue').value),seed=Number($('seed').value);
+    const job=MetricsBusy.start('Preparazione dell’analisi statistica…',{onCancel:()=>clearResults('Analisi annullata.')});
     try{
+      await job.step('Preparazione dei dati per i test…');if(ticket!==version)return;
       if(!Number.isInteger(permutations)||permutations<100||permutations>50000||!Number.isFinite(nullValue)||!Number.isInteger(seed)||seed<0||seed>4294967295)throw new Error('Controlla valore nullo, seed e numero di permutazioni (100–50.000).');
       const matrix=ctx.mode==='series'?A.completeTimeMatrix(ctx.analysisInput.items,ctx.analysisInput.alignment):A.completeSummaryMatrix(ctx.records,ctx.analysisInput.epochs,ctx.analysisInput.rows);
       if(matrix.subjects.length<2)throw new Error('Servono almeno 2 soggetti con dati completi.');
@@ -101,8 +104,9 @@
       const subjects=matrix.subjects.map(s=>({...s,groupIndex:groups.findIndex(g=>g.id===assignments.get(s.id))}));
       if(design==='multi'&&groups.some((_,i)=>subjects.filter(s=>s.groupIndex===i).length<2))throw new Error('Assegna almeno 2 soggetti utilizzabili a ciascun gruppo.');
       $('runStats').disabled=true;$('cancelStats').disabled=false;
-      const points=await TimeSeriesPermutation.run({subjects,times:matrix.times,mode:design,nullValue,permutations,seed,isCancelled:()=>version!==ticket,onProgress:(done,total)=>{if(version===ticket)$('statsStatus').textContent=`${done.toLocaleString('it-IT')} / ${total.toLocaleString('it-IT')} permutazioni…`;}});
+      const points=await TimeSeriesPermutation.run({subjects,times:matrix.times,mode:design,nullValue,permutations,seed,isCancelled:()=>version!==ticket,onProgress:(done,total)=>{if(version===ticket){$('statsStatus').textContent=`${done.toLocaleString('it-IT')} / ${total.toLocaleString('it-IT')} permutazioni…`;job.update('Analisi statistica in corso…',{value:done,max:total});}}});
       if(ticket!==version)return;
+      await job.step('Preparazione dei risultati statistici…');if(ticket!==version)return;
       const labels=ctx.mode==='summary'?ctx.analysisInput.epochs:matrix.times.map(fmt);
       results=points.map((p,i)=>({...p,label:labels[i],n:subjects.length}));
       resultMeta={view:ctx.mode,metric:ctx.metric,epoch:ctx.mode==='series'?ctx.epoch:'',aggregation:ctx.mode==='summary'?$('aggregation').value:'',normalization:ctx.o.norm,baseline:ctx.o.norm==='none'?'':ctx.o.baseline,baseline_from:Number.isFinite(ctx.o.baseFrom)?ctx.o.baseFrom:'',baseline_to:Number.isFinite(ctx.o.baseTo)?ctx.o.baseTo:'',mad_scale:ctx.o.scaled?1.4826:1,analysis_from:Number.isFinite(ctx.o.from)?ctx.o.from:'',analysis_to:Number.isFinite(ctx.o.to)?ctx.o.to:'',design,null_value:nullValue,permutations,seed,correction:design==='one'?'max-abs-T':'max-F',family:ctx.mode==='series'?'all tested times':'all tested epochs',included_subjects:subjects.map(s=>s.subject).join('; '),excluded_subjects:ctx.records.filter(r=>!subjects.some(s=>s.id===r.id)).map(r=>r.subject).join('; '),group_assignments:design==='multi'?subjects.map(s=>`${s.subject}:${groups[s.groupIndex].name}`).join('; '):'',grid_step:ctx.mode==='series'?ctx.analysisInput.alignment.step:'',max_gap:ctx.o.maxGap??'auto:3*native_median_step',interpolation:ctx.mode==='series'?$('interpolation').value:'',outlier_method:$(ctx.mode==='series'?'outlierSeries':'outlierSummary').value};
@@ -115,11 +119,11 @@
       const omitted=ctx.mode==='series'?`${matrix.dropped} istanti incompleti omessi.`:`Soggetti incompleti esclusi: ${matrix.excluded.join(', ')||'nessuno'}.`;
       $('statsStatus').textContent=`Completato: ${points.filter(p=>p.pAdjusted<=.05).length}/${points.length} risultati con p corretto ≤ 0,05. N=${subjects.length}. ${omitted} I flag outlier non escludono automaticamente soggetti.`;
     }catch(e){if(ticket===version)$('statsStatus').textContent=e.message;}
-    finally{if(ticket===version){$('runStats').disabled=!context;$('cancelStats').disabled=true;}}
+    finally{job.end();if(ticket===version){$('runStats').disabled=!context;$('cancelStats').disabled=true;}}
   };
   $('exportStats').onclick=()=>{
-    if(!results.length)return;const rows=results.map(r=>({...resultMeta,target:r.label,statistic:r.statistic,p_uncorrected:r.pUncorrected,p_adjusted:r.pAdjusted,n:r.n})),headers=Object.keys(rows[0]);
+    if(!results.length)return;return MetricsBusy.run('Preparazione del CSV delle analisi…',async()=>{const rows=results.map(r=>({...resultMeta,target:r.label,statistic:r.statistic,p_uncorrected:r.pUncorrected,p_adjusted:r.pAdjusted,n:r.n})),headers=Object.keys(rows[0]);
     const quote=x=>{let v=x===null||x===undefined?'':String(x);if(typeof x==='string'&&/^[=+@\-\t\r]/.test(v))v="'"+v;return '"'+v.replaceAll('"','""')+'"';};
-    const csv='\uFEFF'+[headers,...rows.map(r=>headers.map(k=>r[k]))].map(r=>r.map(quote).join(',')).join('\r\n'),url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),a=el('a');a.href=url;a.download=`metrics-${currentMode}-permutation.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    const csv='\uFEFF'+[headers,...rows.map(r=>headers.map(k=>r[k]))].map(r=>r.map(quote).join(',')).join('\r\n'),url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),a=el('a');a.href=url;a.download=`metrics-${currentMode}-permutation.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}).catch(error=>{$('statsStatus').textContent=error.message;});
   };
 })();

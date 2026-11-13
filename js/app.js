@@ -30,16 +30,32 @@
       const text=node('span',r.subject);text.style.color=palette[i%palette.length];label.append(check,text);const remove=node('button','×');remove.title=`Rimuovi ${r.subject}`;remove.setAttribute('aria-label',remove.title);remove.onclick=()=>{dataset.recordings=dataset.recordings.filter(x=>x.id!==r.id);selected.delete(r.id);if(!dataset.recordings.length)dataset=null;refresh();};row.append(label,remove);$('subjects').append(row);
     }
     $('status').textContent=dataset?`${dataset.recordings.length} soggetti · ${allMetrics().length} metriche · ${allEpochs().length} epoche. I nuovi file vengono aggiunti al dataset.`:'Nessun file caricato.';
-    render();
+    return render();
   }
   async function load(files){
+    const list=[...files];if(!list.length)return;
     const ticket=++generation;$('errors').textContent='';
+    const job=MetricsBusy.start('Lettura metriche in corso…');
     try{
-      const inputs=await Promise.all([...files].map(async file=>{if(!file.name.toLowerCase().endsWith('.json'))throw new Error(`${file.name}: scegliere un file JSON.`);if(file.size>100*1024*1024)throw new Error(`${file.name}: file oltre il limite di 100 MB.`);try{return C.validate(JSON.parse(await file.text()));}catch(e){throw new Error(`${file.name}: ${e.message}`);}}));
+      const inputs=[];
+      for(const [index,file]of list.entries()){
+        await job.step(`Lettura metriche in corso: ${file.name}`,{value:index,max:list.length});
+        if(ticket!==generation)return;
+        if(!file.name.toLowerCase().endsWith('.json'))throw new Error(`${file.name}: scegliere un file JSON.`);
+        if(file.size>100*1024*1024)throw new Error(`${file.name}: file oltre il limite di 100 MB.`);
+        const text=await file.text();
+        await job.step(`Verifica delle metriche: ${file.name}`,{value:index,max:list.length});
+        if(ticket!==generation)return;
+        try{inputs.push(C.validate(JSON.parse(text)));}catch(e){throw new Error(`${file.name}: ${e.message}`);}
+      }
+      await job.step('Preparazione dei soggetti e delle epoche…',{value:list.length,max:list.length});
       if(ticket!==generation)return;
-      if(!inputs.length)return;
-      const merged=C.merge(dataset?[dataset,...inputs]:inputs);for(const d of inputs)for(const r of d.recordings)selected.add(r.id);dataset=merged;refresh();
+      const merged=C.merge(dataset?[dataset,...inputs]:inputs);
+      await job.step('Preparazione dei grafici e degli outlier…');
+      if(ticket!==generation)return;
+      for(const d of inputs)for(const r of d.recordings)selected.add(r.id);dataset=merged;await refresh();
     }catch(e){if(ticket===generation)$('errors').textContent=e.message;}
+    finally{job.end();}
   }
   function config(){
     const o={norm:$('normalization').value,baseline:$('baseline').value,baseFrom:number('baseFrom',-Infinity),baseTo:number('baseTo',Infinity),from:number('from',-Infinity),to:number('to',Infinity),maxGap:number('gap',null),step:number('step',null),scaled:$('madScale').value==='scaled'};
@@ -93,6 +109,17 @@
     }
   }
   function render(){
+    const metric=$('metric').value;
+    const count=(dataset?.recordings||[]).reduce((sum,r)=>sum+r.epochs.reduce((n,e)=>n+(e.metrics[metric]?.values.length||0),0),0);
+    if(count<20000 && (dataset?.recordings.length||0)<100)return renderNow();
+    return MetricsBusy.run('Elaborazione delle metriche in corso…',async job=>{
+      await job.step('Preparazione e normalizzazione di tutte le epoche…');
+      normalizedDataset(dataset.recordings,metric,config());
+      await job.step(mode==='series'?'Allineamento delle serie e preparazione dei grafici…':'Calcolo dei riepiloghi temporali e degli outlier…');
+      renderNow();
+    }).catch(error=>{$('errors').textContent=error.message;});
+  }
+  function renderNow(){
     document.dispatchEvent(new CustomEvent('metrics-invalidated',{detail:{mode}}));
     if(forcedIndividuals)$('individuals').checked=false;
     let analysisInput=null;revealIndividualTraces=null;restoreIndividualTraces=null;forcedIndividuals=false;
@@ -139,7 +166,7 @@
     dataset=C.validate({schema_version:1,time_unit:'s',recordings});selected=new Set(recordings.map(r=>r.id));refresh();$('epoch').value='task1';$('baseline').value='bslaperti';render();
   }
   function csvCell(v){let s=v===null||v===undefined?'':String(v);if(typeof v==='string'&&/^[=+@\-\t\r]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';}
-  $('export').onclick=()=>{if(!exportRows.length)return;const headers=[...new Set(exportRows.flatMap(Object.keys))],csv='\uFEFF'+[headers,...exportRows.map(r=>headers.map(k=>r[k]))].map(r=>r.map(csvCell).join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),a=node('a');a.href=url;a.download=`metrics-${mode}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+  $('export').onclick=()=>{if(!exportRows.length)return;return MetricsBusy.run('Preparazione del file CSV…',async()=>{const headers=[...new Set(exportRows.flatMap(Object.keys))],csv='\uFEFF'+[headers,...exportRows.map(r=>headers.map(k=>r[k]))].map(r=>r.map(csvCell).join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),a=node('a');a.href=url;a.download=`metrics-${mode}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}).catch(error=>{$('errors').textContent=error.message;});};
   $('files').onchange=e=>{load(e.target.files);e.target.value='';};$('demo').onclick=demo;$('clear').onclick=()=>{generation++;dataset=null;selected.clear();refresh();};
   for(const event of ['dragover','dragenter'])$('drop').addEventListener(event,e=>{e.preventDefault();$('drop').classList.add('is-dragging');});$('drop').ondragleave=()=>$('drop').classList.remove('is-dragging');$('drop').ondrop=e=>{e.preventDefault();$('drop').classList.remove('is-dragging');load(e.dataTransfer.files);};
   $('all').onclick=()=>{selected=new Set((dataset?.recordings||[]).map(r=>r.id));refresh();};$('none').onclick=()=>{selected.clear();refresh();};$('seriesTab').onclick=()=>{mode='series';render();};$('summaryTab').onclick=()=>{mode='summary';render();};

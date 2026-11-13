@@ -156,3 +156,9 @@ assertSuccess(results)
 I dati reali di ricerca non sono inclusi nella repository. `private-data/` e i MAT sono esclusi da Git.
 
 Misura dell’esportatore ottimizzato sul dataset di sei soggetti (49.383 campioni): conversione e salvataggio locale da 0,8251 s a 0,1342 s (circa 6,15×), escludendo caricamento MAT e finestre di dialogo. Il JSON decodificato resta identico.
+
+## Avanzamento delle operazioni
+
+Un popup modale indica le fasi di lettura e verifica dei JSON, preparazione dei grafici, ricerca outlier ed esportazione CSV. Le elaborazioni di dataset grandi (almeno 20.000 campioni della metrica o 100 registrazioni) mostrano anche le fasi di normalizzazione e allineamento. Il browser riceve tempo per disegnare il popup prima dei calcoli. I passaggi sincroni più costosi possono comunque occupare il thread principale; non viene mostrata una percentuale inventata.
+
+Nei test statistici l’avanzamento mostra il numero effettivo di permutazioni completate. Il pulsante Annulla analisi (o Escape) interrompe il test al successivo blocco di permutazioni. Il popup si chiude anche in caso di errore e riporta il focus al controllo precedente.
