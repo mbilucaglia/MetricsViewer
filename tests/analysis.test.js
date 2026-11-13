@@ -73,3 +73,23 @@ test('summary badge aggregates only checked epochs and reports partial evaluatio
   const both=A.summaryFlags(records,['task1','task2'],flags);assert.deepEqual(both.get('a').flaggedEpochs,['task2']);assert.equal(both.get('b').status,'flagged');assert.deepEqual(both.get('b').unavailableEpochs,['task2']);assert.equal(both.get('c').status,'insufficient');
   assert.equal(A.summaryFlags(records,['task1'],flags,'none').get('c').status,'disabled');
 });
+
+test('independent post-hoc preserve pair sizes, direction, max correction and reproducibility',async()=>{
+  const subjects=[1,2,4,6,10,13].map((v,i)=>({values:[v,2*v],groupIndex:Math.floor(i/2)}));
+  const opts={subjects,times:[0,1],groupNames:['A','B','C'],permutations:199,seed:51};
+  const result=await P.runPairwise(opts);assert.deepEqual(result,await P.runPairwise(opts));assert.equal(result.length,6);
+  for(let pair=0;pair<3;pair++){
+    const row=result[pair*2],a=row.groupIndexA,b=row.groupIndexB;
+    const subset=subjects.filter(s=>s.groupIndex===a||s.groupIndex===b).map(s=>({...s,groupIndex:s.groupIndex===a?0:1}));
+    const ref=await P.run({subjects:subset,times:[0,1],mode:'multi',permutations:199,seed:51+pair});
+    assert.equal(row.pAdjusted,Math.min(1,ref[0].pAdjusted*3));assert.equal(row.pUncorrected,ref[0].pUncorrected);
+    assert.ok(row.statistic<0);assert.equal(row.nA,2);assert.equal(row.nB,2);assert.equal(row.n,4);
+    assert.ok(Math.abs(row.statistic**2-ref[0].statistic)<1e-10);
+  }
+  await assert.rejects(P.runPairwise({...opts,isCancelled:()=>true}),/annullata/);
+});
+test('two independent groups need only the epoch family correction',async()=>{
+ const subjects=[1,2,3,5,6].map((v,i)=>({values:[v],groupIndex:i<2?0:1}));
+ const opts={subjects,times:[0],groupNames:['A','B'],permutations:99,seed:3};
+ const r=await P.runPairwise(opts);assert.equal(r[0].nA,2);assert.equal(r[0].nB,3);assert.equal(r[0].pUncorrected,r[0].pAdjusted);
+});

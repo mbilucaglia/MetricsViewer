@@ -104,12 +104,14 @@
       significant.forEach((c,i)=>{
         const a=categories.indexOf(c.epochA),b=categories.indexOf(c.epochB);if(a<0||b<0)return;
         const y=p.t-14-i*24,stars=c.pAdjusted<=.001?'***':c.pAdjusted<=.01?'**':'*';
-        const label=`${c.epochA} – ${c.epochB}: ${stars}, p ${c.correction} = ${fmt(c.pAdjusted)}`;
+        const label=`${c.label||c.epochA+' – '+c.epochB}: ${stars}, p ${c.correction} = ${fmt(c.pAdjusted)}`;
+        const width=Math.min(88,(X(1)-X(0))*.7/Math.max(1,traces.length));
+        const xa=X(a)+(Number.isInteger(c.groupIndexA)?(c.groupIndexA-(traces.length-1)/2)*width:0),xb=X(b)+(Number.isInteger(c.groupIndexB)?(c.groupIndexB-(traces.length-1)/2)*width:0);
         const group=svgEl('g',{'aria-label':label,'data-significance':'true'});
-        group.append(svgEl('path',{d:`M${X(a)},${y+6}V${y}H${X(b)}V${y+6}`,stroke:'#35335b',fill:'none','stroke-width':1.5}));
-        const text=svgEl('text',{x:(X(a)+X(b))/2,y:y-4,'text-anchor':'middle'},stars);text.append(svgEl('title',{},label));group.append(text);svg.append(group);
+        if(!c.single)group.append(svgEl('path',{d:`M${xa},${y+6}V${y}H${xb}V${y+6}`,stroke:'#35335b',fill:'none','stroke-width':1.5}));
+        const text=svgEl('text',{x:(xa+xb)/2,y:y-4,'text-anchor':'middle'},stars);text.append(svgEl('title',{},label));group.append(text);svg.append(group);
       });
-      chart.append(node('p',significant.length?'Confronti appaiati: * p ≤ 0,05 · ** p ≤ 0,01 · *** p ≤ 0,001. P-value finali (max-|T| per i post-hoc).':'Nessun confronto appaiato significativo dopo la correzione prevista.','panel-note'));
+      chart.append(node('p',significant.length?'Significatività: * p ≤ 0,05 · ** p ≤ 0,01 · *** p ≤ 0,001. P-value corretti secondo il test; dettagli in tabella.':'Nessun confronto significativo dopo la correzione prevista.','panel-note'));
     }
     const barTraces=traces.filter(tr=>!tr.subjectId),individualBars=traces.filter(tr=>tr.isolationOnly);
     if(bars&&ymin<=0&&ymax>=0)svg.append(svgEl('line',{x1:p.l,x2:w-p.r,y1:Y(0),y2:Y(0),stroke:'#8e87a8','stroke-width':1}));

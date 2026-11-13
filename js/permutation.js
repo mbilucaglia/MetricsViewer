@@ -111,7 +111,25 @@
     }));
   }
 
-  const api = Object.freeze({ run, statistic });
+  async function runPairwise({subjects,times,groupNames,permutations=5000,seed=12345,onProgress=()=>{},isCancelled=()=>false}){
+    const count=groupNames.length,pairs=[];
+    for(let a=0;a<count;a++)for(let b=a+1;b<count;b++)pairs.push([a,b]);
+    if(!pairs.length)throw new Error('Servono almeno due gruppi.');
+    if(subjects.length*times.length*permutations*pairs.length>300000000)throw new Error('Troppi confronti: riduci epoche o permutazioni.');
+    const results=[];
+    for(let i=0;i<pairs.length;i++){
+      const [a,b]=pairs[i],subset=subjects.filter(s=>s.groupIndex===a||s.groupIndex===b).map(s=>({...s,groupIndex:s.groupIndex===a?0:1}));
+      const points=await run({subjects:subset,times,mode:'multi',permutations,seed:(seed+i)>>>0,isCancelled,onProgress:done=>onProgress(i*permutations+done,pairs.length*permutations)});
+      points.forEach((p,j)=>{
+        const left=subset.filter(s=>s.groupIndex===0).map(s=>s.values[j]),right=subset.filter(s=>s.groupIndex===1).map(s=>s.values[j]);
+        const diff=left.reduce((a,b)=>a+b,0)/left.length-right.reduce((a,b)=>a+b,0)/right.length;
+        results.push({...p,statistic:Math.sign(diff)*Math.sqrt(p.statistic),meanDifference:diff,pAdjusted:Math.min(1,p.pAdjusted*pairs.length),correction:'max-|T| sulle epoche × Bonferroni sulle coppie',test:'t gruppi indipendenti (permutazioni)',groupA:groupNames[a],groupB:groupNames[b],groupIndexA:a,groupIndexB:b,epochIndex:j,n:subset.length,nA:left.length,nB:right.length,df1:subset.length-2,df2:null});
+      });
+    }
+    return results;
+  }
+
+  const api = Object.freeze({ run, statistic, runPairwise });
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else global.TimeSeriesPermutation = api;
 })(globalThis);

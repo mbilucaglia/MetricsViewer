@@ -121,7 +121,7 @@ MAD nulla: un valore diverso dalla mediana oltre la tolleranza numerica è segna
 Il motore deriva da `TimeSeriesViewer/js/permutation.js` e preserva:
 
 - Test a un campione: statistica t contro un valore nullo, con sign-flipping dei residui per soggetto; test a due code.
-- Gruppi indipendenti: F omnibus, con permutazione delle etichette dei soggetti e dimensioni dei gruppi conservate. Gruppi aggiungibili/rinominabili; almeno due soggetti per gruppo. Il test non identifica le coppie diverse.
+- Gruppi indipendenti: F omnibus, con permutazione delle etichette dei soggetti e dimensioni dei gruppi conservate. Gruppi aggiungibili/rinominabili; almeno due soggetti per gruppo. Nel riepilogo, i post-hoc identificano le coppie tramite permutazioni delle etichette entro la coppia.
 - Stessa trasformazione del soggetto a tutti gli istanti/epoche in ogni permutazione, preservando la dipendenza entro soggetto.
 - P-value puntuale e corretto max-|T| / max-F, con correzione Monte Carlo `(eccedenze + 1) / (permutazioni + 1)`.
 
@@ -178,3 +178,5 @@ L’esportatore include tutti i soggetti dei file selezionati, senza una seconda
 Nel riepilogo temporale, Scala verticale permette Auto oppure minimo/massimo personalizzati (anche negativi). Il range si applica ai grafici a barre descrittivi e statistici, ritagliando valori e IC fuori scala. Non modifica dati, selezioni, isolamento, test o CSV; i p-value mantengono la propria scala.
 
 Il clic fuori dai controlli di isolamento e dai punti interattivi, oppure Escape, ripristina la vista dei soggetti. Nei grafici statistici del riepilogo le parentesi collegano le coppie significative: * p finale <= 0,05, ** <= 0,01, *** <= 0,001. Per i post-hoc si usano i p corretti max-|T|; il p omnibus non determina le parentesi. Le annotazioni restano sopra il grafico anche con scala Y personalizzata.
+
+Annotazioni statistiche del riepilogo: nel disegno entro soggetto le parentesi collegano epoche; per gruppi indipendenti collegano le barre dei gruppi nella stessa epoca; contro valore nullo compare un asterisco sulla singola barra. I post-hoc indipendenti usano t con varianza pooled (equivalente a F a due gruppi), permutazioni delle etichette dei soli soggetti della coppia, stessa assegnazione a tutte le epoche. Correzione max-|T| sulle epoche e Bonferroni sul numero totale di coppie (anche quelle non significative); famiglia separata dall’omnibus. Richiede scambiabilità dei soggetti tra i due gruppi sotto il nullo, non garantita con distribuzioni/varianze diverse. Sono riportati p grezzi e finali, differenza A-B, numerosità e nomi di entrambi i gruppi nel CSV. B permutazioni per coppia, progressione e annullamento supportati. I grafici dei p-value continuano a mostrare gli omnibus per epoca; tutti i post-hoc sono in tabella e sulle barre significative.
