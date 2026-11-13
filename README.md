@@ -6,7 +6,7 @@ Viewer locale per metriche MATLAB, con stile derivato da TimeSeriesViewer del Be
 
 Aprire `index.html` nel browser, oppure eseguire `npm start` (Node.js) e aprire `http://127.0.0.1:8080`. Il pulsante **Prova un esempio** genera sei soggetti sintetici con durate e passi temporali differenti. I dati caricati rimangono in memoria fino alla chiusura/ricarica della pagina.
 
-L'app ha due schede principali, **Time series** e **Riepilogo temporale**. Ognuna contiene **Visualizzazione** e **Analisi statistiche**. Normalizzazione, metrica, baseline e selezione soggetti sono condivise. La selezione delle epoche tramite checkbox determina il confronto nel riepilogo e la famiglia di test statistici. La ricerca filtra le opzioni senza modificare la selezione.
+L'app ha due schede principali, **Time series** e **Riepilogo temporale**. Ognuna contiene **Visualizzazione** e **Analisi statistiche**. Normalizzazione, metrica, baseline e selezione soggetti sono condivise. Il selettore della singola epoca è nella scheda Time series; funzione di aggregazione e checkbox delle epoche sono nella scheda Riepilogo temporale. Questi controlli rimangono accessibili sia in Visualizzazione sia in Analisi statistiche. La selezione delle epoche tramite checkbox determina il confronto nel riepilogo e la famiglia di test statistici. La ricerca filtra le opzioni senza modificare la selezione. Nei selettori Epoca e Baseline il campo di ricerca è all’interno del menu aperto; frecce, Invio ed Escape permettono di operare da tastiera.
 
 ## Esportazione interattiva da MATLAB
 
@@ -77,6 +77,8 @@ Limiti dell'importazione: 100 MB per file; griglia fino a 50.000 istanti e 2 mil
 
 ## Normalizzazione e riepiloghi
 
+Per la metrica selezionata, la normalizzazione viene precalcolata su tutte le epoche e tutti i soggetti e riutilizzata dalle due modalità. Cambiare epoca visualizzata, selezione dei soggetti, intervallo di analisi o griglia non ricalcola la normalizzazione. Cambiare dati, metrica, metodo, baseline, intervallo baseline o scala MAD invalida il risultato memorizzato.
+
 Per ogni soggetto e metrica le statistiche sono stimate sui campioni originali della baseline selezionata, eventualmente limitata dall'intervallo baseline:
 
 - z-score: `(x - mediaBaseline) / sdBaseline`, con deviazione standard campionaria, denominatore N−1.
@@ -111,9 +113,9 @@ I metodi puntuali sono recuperati da `TimeSeriesViewer/js/data.js` e conservati 
 
 - IQR o MAD sul valore individuale restituito dalla funzione di aggregazione selezionata, separatamente per ogni epoca.
 - Almeno 5 riepiloghi validi. Non si applicano le soglie temporali del 10% e dei 3 istanti: ogni soggetto ha un valore per epoca.
-- La tabella individuale e il CSV riportano un flag per soggetto × epoca. I badge laterali si riferiscono all'epoca indicata nel selettore principale.
+- La tabella individuale e il CSV riportano un flag per soggetto × epoca. I badge laterali riassumono le epoche selezionate: Sì (N) se il soggetto è outlier in almeno un’epoca, No se non ci sono flag nelle epoche valutabili, N/D se nessuna epoca è valutabile. Il tooltip elenca epoche segnalate ed eventuali epoche non valutabili. Il selettore della singola epoca è visibile solo nelle time series.
 
-MAD nulla: un valore diverso dalla mediana oltre la tolleranza numerica è segnalato; valori uguali non lo sono. I flag **non escludono automaticamente nessuno**. I controlli di selezione determinano chi contribuisce ai grafici e ai test.
+MAD nulla: un valore diverso dalla mediana oltre la tolleranza numerica è segnalato; valori uguali non lo sono. I flag **non escludono automaticamente nessuno**. I controlli di selezione determinano chi contribuisce ai grafici e ai test. Nel pannello Campione, **◎** evidenzia una singola traccia e attenua le altre, come in TimeSeriesViewer. **Isola outlier (N)** evidenzia gli outlier tra i soggetti selezionati per la metrica/epoca corrente nelle time series; nel riepilogo considera l’unione degli outlier delle epoche selezionate. **Ripristina vista** annulla l’enfasi. Questi comandi sono solo visivi: non modificano selezione, medie, CSV o risultati statistici. Quando non ci sono outlier selezionati il pulsante collettivo è disabilitato. Cambiare metrica, epoca o impostazioni di calcolo ripristina la vista; deselezionare un soggetto isolato annulla l’isolamento.
 
 ## Analisi statistiche
 
@@ -152,3 +154,5 @@ assertSuccess(results)
 ```
 
 I dati reali di ricerca non sono inclusi nella repository. `private-data/` e i MAT sono esclusi da Git.
+
+Misura dell’esportatore ottimizzato sul dataset di sei soggetti (49.383 campioni): conversione e salvataggio locale da 0,8251 s a 0,1342 s (circa 6,15×), escludendo caricamento MAT e finestre di dialogo. Il JSON decodificato resta identico.

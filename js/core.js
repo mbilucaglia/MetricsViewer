@@ -37,8 +37,8 @@
   function cadence(s) { return median(s.time.slice(1).map((t,i)=>t-s.time[i])); }
   function gapLimit(s, limit) { return finite(limit) && limit > 0 ? limit : (cadence(s) || 0) * 3; }
   function within(s, from=-Infinity, to=Infinity) { return s.values.filter((v,i)=>finite(v) && s.time[i]>=from && s.time[i]<=to); }
-  function normalize(series, baseline, method='none', from=-Infinity, to=Infinity, scaled=true) {
-    if (method === 'none') return {series:{time:series.time, values:[...series.values]}, stats:null};
+  function normalizationStats(baseline, method='none', from=-Infinity, to=Infinity, scaled=true) {
+    if (method === 'none') return null;
     assert(baseline, 'Baseline assente per questa metrica.');
     const b = within(baseline,from,to);
     assert(b.length, 'Nessun campione valido nella baseline selezionata.');
@@ -48,9 +48,39 @@
     else if (method === 'percent') { center=mean(b); scale=center/100; }
     else throw new Error('Normalizzazione sconosciuta.');
     assert(finite(scale) && scale !== 0, 'Baseline non utilizzabile: denominatore nullo o campioni insufficienti.');
-    const values=series.values.map(x=>finite(x) ? (x-center)/scale : null);
+    return {n:b.length,center,scale};
+  }
+  function applyNormalization(series,stats){
+    const values=stats?series.values.map(x=>finite(x)?(x-stats.center)/stats.scale:null):[...series.values];
     assert(values.every(v=>v===null || finite(v)), 'Normalizzazione fuori intervallo numerico.');
-    return {series:{time:series.time,values},stats:{n:b.length,center,scale}};
+    return {series:{time:series.time,values},stats};
+  }
+  function normalize(series,baseline,method='none',from=-Infinity,to=Infinity,scaled=true){
+    return applyNormalization(series,normalizationStats(baseline,method,from,to,scaled));
+  }
+  function normalizeAllEpochs(records,metric,{norm='none',baseline,baseFrom=-Infinity,baseTo=Infinity,scaled=true}={}){
+    const normalized=new Map();
+    for(const r of records){
+      const epochs=new Map();normalized.set(r.id,epochs);
+      let stats=null,baselineError=null;
+      try{stats=normalizationStats(r.epochs.find(e=>e.id===baseline)?.metrics[metric],norm,baseFrom,baseTo,scaled);}
+      catch(error){baselineError=error.message;}
+      for(const e of r.epochs){
+        const series=e.metrics[metric];if(!series)continue;
+        if(baselineError){epochs.set(e.id,{error:baselineError});continue;}
+        try{epochs.set(e.id,applyNormalization(series,stats));}
+        catch(error){epochs.set(e.id,{error:error.message});}
+      }
+    }
+    return normalized;
+  }
+  function createNormalizationCache(){
+    let previousRecords=null,previousKey=null,previousResult=null;
+    return (records,metric,options)=>{
+      const key=JSON.stringify([metric,options.norm,options.baseline,options.baseFrom,options.baseTo,options.scaled]);
+      if(records!==previousRecords||key!==previousKey){previousResult=normalizeAllEpochs(records,metric,options);previousRecords=records;previousKey=key;}
+      return previousResult;
+    };
   }
   function at(s,t,method='linear',gap=Infinity) {
     const ts=s.time, ys=s.values, n=ts.length;
@@ -135,6 +165,6 @@
     const summary=time.map((t,i)=>{const v=values.map(a=>a[i]).filter(finite);return {time:t,mean:mean(v),sd:sd(v),n:v.length};});
     return {time,values,summary,step:dt};
   }
-  const api={finite,mean,median,sd,validate,merge,cadence,gapLimit,within,normalize,at,integral,aggregate,resample,align};
+  const api={finite,mean,median,sd,validate,merge,cadence,gapLimit,within,normalize,normalizationStats,normalizeAllEpochs,createNormalizationCache,at,integral,aggregate,resample,align};
   if(typeof module!=='undefined' && module.exports)module.exports=api;else root.MetricsCore=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

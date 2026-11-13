@@ -52,3 +52,23 @@ test('schema rejects mismatched, duplicate or nonnumeric data',()=>{
   const bad=structuredClone(d);bad.recordings[0].epochs[0].metrics.AWI.time=[0,0];assert.throws(()=>C.validate(bad));
   const bad2=structuredClone(d);bad2.recordings[0].epochs[0].metrics.AWI.values=[2,'3'];assert.throws(()=>C.validate(bad2));
 });
+
+test('all epochs share subject-specific baseline statistics and preserve native timestamps',()=>{
+  const record={id:'a',epochs:[{id:'baseline',metrics:{AWI:s([0,1,2],[1,2,3])}},{id:'task1',metrics:{AWI:s([0,2],[3,5])}},{id:'task2',metrics:{AWI:s([.5,1],[4,null])}}]};
+  const normalized=C.normalizeAllEpochs([record],'AWI',{norm:'zscore',baseline:'baseline'}).get('a');
+  assert.deepEqual(normalized.get('task1').series.values,[1,3]);
+  assert.deepEqual(normalized.get('task2').series.values,[2,null]);
+  assert.equal(normalized.get('task1').stats,normalized.get('task2').stats);
+  assert.deepEqual(normalized.get('task1').series.time,[0,2]);
+  assert.deepEqual(record.epochs[1].metrics.AWI.values,[3,5]);
+});
+test('normalization cache reuses all epochs across view changes and invalidates baseline changes',()=>{
+  const records=[{id:'a',epochs:[{id:'baseline',metrics:{AWI:s([0,1,2],[1,2,3])}},{id:'task',metrics:{AWI:s([0],[5])}}]}];
+  const cache=C.createNormalizationCache(),o={norm:'zscore',baseline:'baseline',baseFrom:-Infinity,baseTo:Infinity,scaled:true};
+  const first=cache(records,'AWI',o);
+  assert.equal(cache(records,'AWI',{...o,from:1,to:2,step:.5}),first);
+  const changed=cache(records,'AWI',{...o,norm:'percent'});
+  assert.notEqual(changed,first);assert.equal(changed.get('a').get('task').series.values[0],150);
+  assert.notEqual(cache([...records],'AWI',{...o,norm:'percent'}),changed);
+  assert.match(cache(records,'AWI',{...o,baseline:'missing'}).get('a').get('task').error,/Baseline assente/);
+});

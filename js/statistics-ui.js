@@ -4,10 +4,11 @@
   const subviews={series:'view',summary:'view'};
   let currentMode='series',context=null,version=0,results=[],resultMeta=null;
   let groups=[{id:'g1',name:'Gruppo 1'},{id:'g2',name:'Gruppo 2'}],nextGroup=3;
+  const isolation=MetricsIsolation.create();let isolationKey=null,isolationDataset=null,latestFlags=new Map();
   const assignments=new Map(),colors=['#514691','#248d92','#c17b40','#b55488','#608a4a'];
   const el=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
   const fmt=x=>C.finite(x)?Number(x.toPrecision(6)).toString():x===Infinity?'∞':x===-Infinity?'−∞':'—';
-  function subview(){const stats=subviews[currentMode]==='stats';$('visualPanel').hidden=stats;$('statsPanel').hidden=!stats;for(const [id,active]of [['viewTab',!stats],['statsTab',stats]]){$(id).classList.toggle('is-active',active);$(id).setAttribute('aria-pressed',String(active));}$('statsTitle').textContent=`Analisi statistiche · ${currentMode==='series'?'Time series':'Riepilogo temporale'}`;}
+  function subview(){$('seriesModeControls').hidden=currentMode!=='series';$('summaryModeControls').hidden=currentMode!=='summary';const stats=subviews[currentMode]==='stats';$('visualPanel').hidden=stats;$('statsPanel').hidden=!stats;for(const [id,active]of [['viewTab',!stats],['statsTab',stats]]){$(id).classList.toggle('is-active',active);$(id).setAttribute('aria-pressed',String(active));}$('statsTitle').textContent=`Analisi statistiche · ${currentMode==='series'?'Time series':'Riepilogo temporale'}`;}
   function clearResults(message='Impostazioni aggiornate: esegui nuovamente l’analisi.'){
     version++;results=[];resultMeta=null;$('statsResults').replaceChildren();$('statsGroupPlot').replaceChildren();$('statsPPlot').replaceChildren();$('exportStats').disabled=true;$('cancelStats').disabled=true;$('runStats').disabled=!context;$('statsStatus').textContent=message;
   }
@@ -17,26 +18,45 @@
     for(const r of context?.records||[]){if(!assignments.has(r.id))assignments.set(r.id,groups[0].id);const label=el('label',r.subject,'group-assignment'),select=el('select');select.setAttribute('aria-label',`Gruppo di ${r.subject}`);for(const g of groups){const option=el('option',g.name);option.value=g.id;select.append(option);}select.value=assignments.get(r.id);select.onchange=()=>{assignments.set(r.id,select.value);clearResults();};label.append(select);$('assignments').append(label);}
   }
   function table(target,headers,rows){const t=el('table'),h=el('thead'),tr=el('tr');headers.forEach(x=>tr.append(el('th',x)));h.append(tr);t.append(h);const body=el('tbody');for(const row of rows.slice(0,1000)){const tr=el('tr');row.forEach(x=>tr.append(el('td',x)));body.append(tr);}t.append(body);$(target).append(t);if(rows.length>1000)$(target).append(el('p','Anteprima limitata a 1.000 righe; il CSV contiene tutti i risultati.','panel-note'));}
-  function flagLabel(flag){return flag?.status==='flagged'?'Sì':flag?.status==='within'?'No':flag?.status==='disabled'?'Off':'N/D';}
+  function flagLabel(flag){return flag?.status==='flagged'?(flag.flaggedEpochs?`Sì (${flag.flaggedEpochs.length})`:'Sì'):flag?.status==='within'?'No':flag?.status==='disabled'?'Off':'N/D';}
   function flagDescription(flag,summary){
+    if(flag?.flaggedEpochs && flag.status!=='disabled'){
+      const evaluated=`${flag.evaluatedEpochs.length}/${flag.totalEpochs} epoche valutabili`,missing=flag.unavailableEpochs.length?` Non valutabili: ${flag.unavailableEpochs.join(', ')}.`:'';
+      return (flag.status==='flagged'?`Outlier in: ${flag.flaggedEpochs.join(', ')}. `:flag.status==='within'?'Nessun outlier nelle epoche valutabili. ':'Nessuna epoca valutabile. ')+evaluated+missing+' Nessuna esclusione automatica.';
+    }
     if(!flag||flag.status==='insufficient')return summary?'Servono almeno 5 riepiloghi validi per questa metrica ed epoca.':'Servono almeno 5 soggetti confrontabili e almeno 3 istanti valutabili (oppure 5 medie temporali valide).';
     if(flag.status==='disabled')return 'Rilevamento disattivato.';
     if(flag.tested!==undefined)return `${flag.deviating}/${flag.tested} istanti oltre soglia. Nessuna esclusione automatica.`;
     return `Valore: ${fmt(flag.value)}; limiti IQR: ${fmt(flag.lowerFence)} / ${fmt(flag.upperFence)}; z robusto: ${fmt(flag.robustZ)}. Nessuna esclusione automatica.`;
   }
+  function updateIsolationControls(ctx){
+    const drawable=ctx.records.filter(r=>ctx.mode==='series'?ctx.analysisInput.items.some((item,i)=>item.r.id===r.id&&ctx.analysisInput.alignment.values[i].some(C.finite)):ctx.analysisInput.rows.some(row=>row.subject===r.subject&&C.finite(row.value)));
+    const ids=isolation.resolve(drawable,latestFlags),target=isolation.target;
+    const count=drawable.filter(r=>latestFlags.get(r.id)?.status==='flagged').length;
+    const button=$('isolateOutliers');button.disabled=count===0;button.textContent=`◎ ${target?.type==='outliers'?'Ripristina outlier':'Isola outlier'} (${count})`;button.setAttribute('aria-pressed',String(target?.type==='outliers'));
+    $('restoreIsolation').hidden=!target;
+    $('isolationStatus').textContent=target?`${ids.length} ${ids.length===1?'soggetto evidenziato':'soggetti evidenziati'}. Selezione, medie, CSV e test restano invariati.`:count?`${count} outlier tra i soggetti selezionati. ◎ evidenzia una singola traccia.`:'Nessun outlier tra i soggetti selezionati. ◎ evidenzia una singola traccia.';
+    for(const row of $('subjects').children){
+      let button=row.querySelector('.trace-isolate-button');
+      if(!button){button=el('button','◎','trace-isolate-button');button.type='button';button.onclick=()=>{isolation.toggleSubject(row.dataset.recordingId);subviews[currentMode]='view';subview();updateIsolationControls(context);};row.insertBefore(button,row.lastElementChild);}
+      const record=ctx.dataset.recordings.find(r=>r.id===row.dataset.recordingId),selected=drawable.some(r=>r.id===row.dataset.recordingId),active=target?.type==='subject'&&target.id===row.dataset.recordingId;
+      button.disabled=!selected;button.setAttribute('aria-pressed',String(active));button.setAttribute('aria-label',`${active?'Ripristina':'Isola'} traccia ${record.subject}`);button.title=selected?`${active?'Ripristina':'Isola'} la traccia di ${record.subject}`:'Seleziona un soggetto con valori visualizzabili per isolare la traccia';
+    }
+    ctx.setVisualIsolation(ids);
+  }
   function updateOutliers(ctx){
     const summary=ctx.mode==='summary',method=$(summary?'outlierSummary':'outlierSeries').value;
     $('outlierSeries').parentElement.hidden=summary;$('summaryOutlierControl').hidden=!summary;
-    $('outlierContext').textContent=`Flag per ${ctx.metric} · ${ctx.epoch}${summary?' · '+$('aggregation').selectedOptions[0].textContent:''}`;
-    $('outlierHelp').textContent=summary?'IQR o MAD sono applicati ai riepiloghi temporali individuali dopo normalizzazione e aggregazione. Ogni metrica × epoca ha soglie proprie; servono almeno 5 soggetti validi. IQR: 1,5 × intervallo interquartile. MAD: |z robusto| > 3,5.':'Come in TimeSeriesViewer: IQR 1,5 × o z robusto MAD > 3,5 a ogni istante, con almeno 5 soggetti. Il flag richiede almeno 3 istanti oltre soglia e almeno il 10% degli istanti valutabili. Media temporale IQR confronta le medie pesate nel tempo (almeno 5 soggetti). I confronti usano la griglia comune su tutta l’estensione disponibile, limitata all’intervallo di analisi.';
+    $('outlierContext').textContent=summary?`Flag per ${ctx.metric} · ${ctx.analysisInput.epochs.length} epoche selezionate · ${$('aggregation').selectedOptions[0].textContent}`:`Flag per ${ctx.metric} · ${ctx.epoch}`;
+    $('outlierHelp').textContent=summary?'IQR o MAD sono applicati ai riepiloghi temporali individuali dopo normalizzazione e aggregazione. Ogni metrica × epoca ha soglie proprie; servono almeno 5 soggetti validi. Il badge laterale segnala un soggetto se è outlier in almeno una delle epoche selezionate e indica quante. No significa nessun flag nelle epoche valutabili; N/D significa nessuna epoca valutabile. Il tooltip elenca eventuali epoche non valutabili. IQR: 1,5 × intervallo interquartile. MAD: |z robusto| > 3,5.':'Come in TimeSeriesViewer: IQR 1,5 × o z robusto MAD > 3,5 a ogni istante, con almeno 5 soggetti. Il flag richiede almeno 3 istanti oltre soglia e almeno il 10% degli istanti valutabili. Media temporale IQR confronta le medie pesate nel tempo (almeno 5 soggetti). I confronti usano la griglia comune su tutta l’estensione disponibile, limitata all’intervallo di analisi.';
     let flags=new Map();const epochFlags=new Map();$('outlierResults').replaceChildren();
     try{
       if(summary){
-        for(const epoch of new Set([...ctx.analysisInput.epochs,ctx.epoch])){
+        for(const epoch of ctx.analysisInput.epochs){
           const items=ctx.prepared(ctx.dataset.recordings,epoch,ctx.metric,ctx.o,[]);
           epochFlags.set(epoch,A.scalarFlags(items.map(x=>({id:x.r.id,value:C.aggregate(x.series,$('aggregation').value,ctx.o.from,ctx.o.to,C.gapLimit(x.series,ctx.o.maxGap)).value})),method));
         }
-        flags=epochFlags.get(ctx.epoch)||new Map();
+        flags=A.summaryFlags(ctx.dataset.recordings,ctx.analysisInput.epochs,epochFlags,method);
         $('outlierResults').append(el('h3','Riepiloghi individuali e outlier'));
         table('outlierResults',['Soggetto','Epoca','Valore','Campioni','Outlier'],ctx.analysisInput.rows.map(r=>[r.subject,r.epoch,fmt(r.value),r.n_samples,flagLabel(epochFlags.get(r.epoch)?.get(ctx.records.find(x=>x.subject===r.subject)?.id))]));
         for(const row of ctx.exportRows){if(row.row_type==='subject'){row.outlier_method=method;row.outlier_status=epochFlags.get(row.epoch)?.get(ctx.records.find(x=>x.subject===row.subject)?.id)?.status||'insufficient';}}
@@ -47,16 +67,20 @@
         for(const row of ctx.exportRows){row.outlier_method=method;row.flagged_subjects=flagged;}
       }
     }catch(e){$('outlierContext').textContent+=` · Non valutabile: ${e.message}`;}
+    latestFlags=flags;
     for(const row of $('subjects').children){row.querySelector('.outlier-badge')?.remove();const flag=flags.get(row.dataset.recordingId),badge=el('span',flagLabel(flag),`outlier-badge outlier-${flag?.status||'insufficient'}`);badge.title=flagDescription(flag,summary);badge.setAttribute('aria-label',`Outlier: ${flagLabel(flag)}. ${badge.title}`);row.insertBefore(badge,row.lastElementChild);}
+    updateIsolationControls(ctx);
   }
-  document.addEventListener('metrics-invalidated',e=>{currentMode=e.detail?.mode||currentMode;context=null;clearResults('Seleziona dati utilizzabili nella visualizzazione.');$('statsTarget').textContent='Seleziona dati utilizzabili nella visualizzazione.';$('outlierResults').replaceChildren();for(const badge of $('subjects').querySelectorAll('.outlier-badge'))badge.remove();subview();});
+  document.addEventListener('metrics-invalidated',e=>{currentMode=e.detail?.mode||currentMode;context=null;$('isolateOutliers').disabled=true;$('restoreIsolation').hidden=true;$('isolationStatus').textContent='';for(const button of $('subjects').querySelectorAll('.trace-isolate-button'))button.disabled=true;clearResults('Seleziona dati utilizzabili nella visualizzazione.');$('statsTarget').textContent='Seleziona dati utilizzabili nella visualizzazione.';$('outlierResults').replaceChildren();for(const badge of $('subjects').querySelectorAll('.outlier-badge'))badge.remove();subview();});
   document.addEventListener('metrics-ready',e=>{
-    context=e.detail;currentMode=context.mode;subview();groupEditor();updateOutliers(context);$('runStats').disabled=false;
+    context=e.detail;currentMode=context.mode;const key=JSON.stringify([context.mode,context.metric,context.mode==='series'?context.epoch:null,context.o,$('aggregation').value,context.dataset.recordings.map(r=>r.id),context.analysisInput.epochs,$('range').value,$('interpolation').value]);if(key!==isolationKey||isolationDataset!==context.dataset){isolation.reset();isolationKey=key;isolationDataset=context.dataset;}subview();groupEditor();updateOutliers(context);$('runStats').disabled=false;
     const targets=context.mode==='series'?context.epoch:context.analysisInput.epochs.join(', ');
     $('statsTarget').textContent=`${context.metric} · ${targets} · ${context.records.length} soggetti selezionati · ${$('normalization').selectedOptions[0].textContent}${context.mode==='summary'?' · '+$('aggregation').selectedOptions[0].textContent:''}`;
     $('statsMethod').textContent=context.mode==='series'?'Test di permutazione mass-univariate come in TimeSeriesViewer: t a un campione con inversione dei segni o F omnibus tra gruppi con scambio delle etichette. Correzione max-T (max-F per il test F) su tutti gli istanti analizzati della metrica × epoca. Si usano solo istanti validi per tutti i soggetti utilizzabili.':'Test di permutazione sui riepiloghi individuali: t contro un valore nullo o F omnibus tra gruppi indipendenti. La correzione del massimo copre tutte le epoche analizzate della metrica scelta. Ogni soggetto mantiene lo stesso segno o la stessa etichetta di gruppo in tutte le epoche; si usano i soggetti con dati completi. Questo test non confronta direttamente due epoche appaiate.';
   });
   $('viewTab').onclick=()=>{subviews[currentMode]='view';subview();};$('statsTab').onclick=()=>{subviews[currentMode]='stats';subview();};
+  $('isolateOutliers').onclick=()=>{if(!context)return;isolation.toggleOutliers();subviews[currentMode]='view';subview();updateIsolationControls(context);};
+  $('restoreIsolation').onclick=()=>{isolation.reset();if(context)updateIsolationControls(context);};
   $('outlierSeries').onchange=()=>{if(context)updateOutliers(context);};$('outlierSummary').onchange=()=>{if(context)updateOutliers(context);};
   $('design').onchange=()=>{clearResults();groupEditor();};for(const id of ['nullValue','permutations','seed'])$(id).onchange=()=>clearResults();
   $('addGroup').onclick=()=>{groups.push({id:`g${nextGroup}`,name:`Gruppo ${nextGroup++}`});clearResults();groupEditor();};

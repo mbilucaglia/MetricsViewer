@@ -52,3 +52,24 @@ test('permutation cancellation and missing-value validation',async()=>{
   await assert.rejects(P.run({...opts,isCancelled:()=>true}),/annullata/);
   await assert.rejects(P.run({...opts,subjects:[{values:[1]},{values:[null]}]}),/finiti/);
 });
+
+const Isolation=require('../js/isolation');
+test('visual isolation preserves selections and restores without mutating subjects',()=>{
+  const selected=[{id:'a'},{id:'b'},{id:'c'}],original=structuredClone(selected),flags=new Map([['a',{status:'flagged'}],['b',{status:'within'}],['c',{status:'flagged'}]]),i=Isolation.create();
+  i.toggleOutliers();assert.deepEqual(i.resolve(selected,flags),['a','c']);assert.deepEqual(selected,original);
+  i.toggleSubject('b');assert.deepEqual(i.resolve(selected,flags),['b']);
+  i.toggleSubject('b');assert.equal(i.resolve(selected,flags),null);assert.deepEqual(selected,original);
+});
+test('isolation handles no flags and removal or deselection of isolated subjects',()=>{
+  const i=Isolation.create();i.toggleOutliers();assert.equal(i.resolve([{id:'a'}],new Map()),null);assert.equal(i.target,null);
+  i.toggleSubject('a');assert.equal(i.resolve([{id:'b'}],new Map()),null);assert.equal(i.target,null);
+  i.toggleOutliers();assert.deepEqual(i.resolve([{id:'a'}],new Map([['a',{status:'flagged'}],['b',{status:'flagged'}]])),['a']);
+  i.reset();assert.equal(i.resolve([{id:'a'}],new Map()),null);
+});
+
+test('summary badge aggregates only checked epochs and reports partial evaluation',()=>{
+  const records=[{id:'a'},{id:'b'},{id:'c'}],flags=new Map([['task1',new Map([['a',{status:'within'}],['b',{status:'flagged'}]])],['task2',new Map([['a',{status:'flagged'}],['b',{status:'insufficient'}]])]]);
+  const one=A.summaryFlags(records,['task1'],flags);assert.equal(one.get('a').status,'within');
+  const both=A.summaryFlags(records,['task1','task2'],flags);assert.deepEqual(both.get('a').flaggedEpochs,['task2']);assert.equal(both.get('b').status,'flagged');assert.deepEqual(both.get('b').unavailableEpochs,['task2']);assert.equal(both.get('c').status,'insufficient');
+  assert.equal(A.summaryFlags(records,['task1'],flags,'none').get('c').status,'disabled');
+});

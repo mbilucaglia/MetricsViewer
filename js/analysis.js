@@ -11,6 +11,14 @@
       flags.set(x.id,{status:flagged?'flagged':'within',value:x.value,lowerFence:q1-1.5*iqr,upperFence:q3+1.5*iqr,robustZ:z});
     }return flags;
   }
+  function summaryFlags(records,epochs,epochFlags,method='iqr'){
+    return new Map(records.map(r=>{
+      const flaggedEpochs=epochs.filter(epoch=>epochFlags.get(epoch)?.get(r.id)?.status==='flagged');
+      const evaluated=epochs.filter(epoch=>['flagged','within'].includes(epochFlags.get(epoch)?.get(r.id)?.status));
+      const unavailableEpochs=epochs.filter(epoch=>!evaluated.includes(epoch));
+      return [r.id,{status:method==='none'?'disabled':flaggedEpochs.length?'flagged':evaluated.length?'within':'insufficient',flaggedEpochs,evaluatedEpochs:evaluated,unavailableEpochs,totalEpochs:epochs.length}];
+    }));
+  }
   function temporalFlags(items,options,method='iqr'){
     if(method==='mean-iqr'){
       return scalarFlags(items.map(x=>({id:x.r.id,value:C.aggregate(x.series,'weighted',options.from,options.to,C.gapLimit(x.series,options.maxGap)).value})),'iqr');
@@ -37,6 +45,6 @@
     const subjects=records.map(r=>({id:r.id,subject:r.subject,values:epochs.map(e=>rows.find(x=>x.subject===r.subject&&x.epoch===e)?.value??null)}));
     return {times:epochs.map((_,i)=>i),subjects:subjects.filter(s=>s.values.every(C.finite)),excluded:subjects.filter(s=>!s.values.every(C.finite)).map(s=>s.subject)};
   }
-  const api={scalarFlags,temporalFlags,ci95,completeTimeMatrix,completeSummaryMatrix};
+  const api={scalarFlags,summaryFlags,temporalFlags,ci95,completeTimeMatrix,completeSummaryMatrix};
   if(typeof module!=='undefined')module.exports=api;else root.MetricsAnalysis=api;
 })(globalThis);

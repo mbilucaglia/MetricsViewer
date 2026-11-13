@@ -2,7 +2,7 @@
   'use strict';
   const C=MetricsCore,$=id=>document.getElementById(id),palette=['#514691','#248d92','#c17b40','#b55488','#608a4a','#537bc3','#986240','#877fa4'];
   let dataset=null,selected=new Set(),mode='series',exportRows=[],generation=0;
-  let summaryEpochs=new Set(),knownEpochs=new Set();
+  let summaryEpochs=new Set(),knownEpochs=new Set(),revealIndividualTraces=null,restoreIndividualTraces=null,forcedIndividuals=false;
   const node=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
   const fmt=x=>C.finite(x)?Number(x.toPrecision(6)).toString():'—';
   function number(id,fallback){const v=$(id).value.trim();if(!v)return fallback;const n=Number(v);if(!Number.isFinite(n))throw new Error('Valore numerico non valido.');if(n<0)throw new Error('Tempi e intervalli devono essere non negativi.');return n;}
@@ -46,11 +46,13 @@
     if(o.from>o.to||o.baseFrom>o.baseTo)throw new Error('L’inizio dell’intervallo deve precedere la fine.');
     if(o.step!==null&&o.step<=0||o.maxGap!==null&&o.maxGap<=0)throw new Error('Passo griglia e lacuna massima devono essere positivi.');return o;
   }
+  const normalizedDataset=C.createNormalizationCache();
   function prepared(records,epoch,metric,o,warnings){
+    const normalized=normalizedDataset(dataset.recordings,metric,o);
     return records.flatMap(r=>{
       const s=r.epochs.find(e=>e.id===epoch)?.metrics[metric];
       if(!s?.time.length){warnings.push(`${r.subject} · ${epoch}: metrica assente o vuota.`);return [];}
-      try{const b=r.epochs.find(e=>e.id===o.baseline)?.metrics[metric];const result=C.normalize(s,b,o.norm,o.baseFrom,o.baseTo,o.scaled);if(!result.series.values.some(C.finite))throw new Error('Nessun valore valido.');return [{r,...result}];}
+      try{const result=normalized.get(r.id)?.get(epoch);if(result?.error)throw new Error(result.error);if(!result.series.values.some(C.finite))throw new Error('Nessun valore valido.');return [{r,...result}];}
       catch(e){warnings.push(`${r.subject} · ${epoch}: ${e.message}`);return [];}
     });
   }
@@ -71,17 +73,29 @@
     for(const[x,label]of ticks){const t=svgEl('text',{x:X(x),y:h-p.b+24,'text-anchor':'middle'},label.length>22?label.slice(0,20)+'…':label);t.append(svgEl('title',{},label));svg.append(t);}
     svg.append(svgEl('text',{x:w/2,y:h-12,'text-anchor':'middle'},xLabel));
     for(const tr of traces){
-      if(tr.band && !categories){let run=[];const flush=()=>{if(run.length>1){const pts=run.map(i=>`${X(tr.x[i])},${Y(tr.y[i]+tr.band[i])}`).concat([...run].reverse().map(i=>`${X(tr.x[i])},${Y(tr.y[i]-tr.band[i])}`)).join(' ');svg.append(svgEl('polygon',{points:pts,fill:tr.color,opacity:'.12'}));}run=[];};for(let i=0;i<tr.x.length;i++){if(C.finite(tr.y[i])&&C.finite(tr.band[i]))run.push(i);else flush();}flush();}
-      if(!categories){let path='',open=false;for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i])){open=false;continue;}path+=`${open?'L':'M'}${X(tr.x[i])},${Y(tr.y[i])} `;open=true;}svg.append(svgEl('path',{d:path,fill:'none',stroke:tr.color,'stroke-width':tr.bold?2.8:1.4,opacity:tr.bold?1:.7}));}
-      if(categories||tr.x.length===1)for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i]))continue;const x=X(tr.x[i]),y=Y(tr.y[i]);if(tr.band&&C.finite(tr.band[i]))svg.append(svgEl('line',{x1:x,x2:x,y1:Y(tr.y[i]-tr.band[i]),y2:Y(tr.y[i]+tr.band[i]),stroke:tr.color,'stroke-width':2}));const circle=svgEl('circle',{cx:x,cy:y,r:tr.bold?6:4,fill:tr.color,opacity:tr.bold?1:.65});circle.append(svgEl('title',{},`${tr.name}: ${fmt(tr.y[i])}`));svg.append(circle);}
+      const traceLayer=svgEl('g',{'data-trace-subject':tr.subjectId||''});svg.append(traceLayer);
+      if(tr.band && !categories){let run=[];const flush=()=>{if(run.length>1){const pts=run.map(i=>`${X(tr.x[i])},${Y(tr.y[i]+tr.band[i])}`).concat([...run].reverse().map(i=>`${X(tr.x[i])},${Y(tr.y[i]-tr.band[i])}`)).join(' ');traceLayer.append(svgEl('polygon',{points:pts,fill:tr.color,opacity:'.12'}));}run=[];};for(let i=0;i<tr.x.length;i++){if(C.finite(tr.y[i])&&C.finite(tr.band[i]))run.push(i);else flush();}flush();}
+      if(!categories){let path='',open=false;for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i])){open=false;continue;}path+=`${open?'L':'M'}${X(tr.x[i])},${Y(tr.y[i])} `;open=true;}traceLayer.append(svgEl('path',{d:path,fill:'none',stroke:tr.color,'stroke-width':tr.bold?2.8:1.4,opacity:tr.bold?1:.7}));}
+      if(categories||tr.x.length===1)for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i]))continue;const x=X(tr.x[i]),y=Y(tr.y[i]);if(tr.band&&C.finite(tr.band[i]))traceLayer.append(svgEl('line',{x1:x,x2:x,y1:Y(tr.y[i]-tr.band[i]),y2:Y(tr.y[i]+tr.band[i]),stroke:tr.color,'stroke-width':2}));const circle=svgEl('circle',{cx:x,cy:y,r:tr.bold?6:4,fill:tr.color,opacity:tr.bold?1:.65});circle.append(svgEl('title',{},`${tr.name}: ${fmt(tr.y[i])}`));traceLayer.append(circle);}
     }
     if(hover){svg.addEventListener('pointermove',event=>{const rect=svg.getBoundingClientRect(),x=xmin+((event.clientX-rect.left)/rect.width*w-p.l)/(w-p.l-p.r)*(xmax-xmin);$('tooltip').textContent=hover(x);$('tooltip').hidden=false;$('tooltip').style.left=Math.max(5,Math.min(event.clientX+12,window.innerWidth-320))+'px';$('tooltip').style.top=Math.max(5,Math.min(event.clientY+12,window.innerHeight-110))+'px';});svg.addEventListener('pointerleave',()=>{$('tooltip').hidden=true;});}
-    chart.append(svg);const legend=node('div',undefined,'legend');for(const tr of traces){const span=node('span'),dot=node('i');dot.style.background=tr.color;span.append(dot,document.createTextNode(tr.name));legend.append(span);}chart.append(legend);
+    chart.append(svg);const legend=node('div',undefined,'legend');for(const tr of traces){const span=node('span'),dot=node('i');span.dataset.traceSubject=tr.subjectId||'';dot.style.background=tr.color;span.append(dot,document.createTextNode(tr.name));legend.append(span);}chart.append(legend);
   }
   function table(headers,rows){const t=node('table'),head=node('thead'),tr=node('tr');headers.forEach(h=>tr.append(node('th',h)));head.append(tr);t.append(head);const body=node('tbody');rows.slice(0,500).forEach(row=>{const tr=node('tr');row.forEach(v=>tr.append(node('td',v)));body.append(tr);});t.append(body);$('results').append(t);if(rows.length>500)$('results').append(node('p','Anteprima: prime 500 righe. Il CSV contiene tutti i risultati.','panel-note'));}
+  function setVisualIsolation(ids){
+    if(ids?.length && mode==='series' && !$('individuals').checked){forcedIndividuals=true;$('individuals').checked=true;revealIndividualTraces?.();}
+    if(!ids?.length && forcedIndividuals){forcedIndividuals=false;$('individuals').checked=false;restoreIndividualTraces?.();}
+    const isolated=ids?.length?new Set(ids):null;
+    for(const trace of $('chart').querySelectorAll('[data-trace-subject]')){
+      const emphasized=isolated?.has(trace.dataset.traceSubject)||false;
+      trace.style.opacity=isolated?(emphasized?'1':'0.10'):'';
+      trace.classList.toggle('is-isolated',emphasized);
+    }
+  }
   function render(){
     document.dispatchEvent(new CustomEvent('metrics-invalidated',{detail:{mode}}));
-    let analysisInput=null;
+    if(forcedIndividuals)$('individuals').checked=false;
+    let analysisInput=null;revealIndividualTraces=null;restoreIndividualTraces=null;forcedIndividuals=false;
     $('errors').textContent='';$('chart').replaceChildren();$('results').replaceChildren();$('warnings').replaceChildren();$('chartNote').textContent='';$('tooltip').hidden=true;exportRows=[];$('export').disabled=true;
     const normalizing=$('normalization').value!=='none';for(const id of ['baseline','baseFrom','baseTo'])$(id).disabled=!normalizing||!dataset;$('madScale').disabled=$('normalization').value!=='zmad';
     $('seriesOptions').hidden=mode!=='series';$('summaryOptions').hidden=mode!=='summary';$('seriesTab').classList.toggle('is-active',mode==='series');$('summaryTab').classList.toggle('is-active',mode==='summary');$('seriesTab').setAttribute('aria-pressed',mode==='series');$('summaryTab').setAttribute('aria-pressed',mode==='summary');
@@ -97,9 +111,11 @@
         const items=prepared(records,epoch,metric,o,warnings);if(!items.length)throw new Error('Nessuna serie utilizzabile con queste impostazioni.');
         const aligned=C.align(items.map(x=>x.series),{range:$('range').value,step:o.step,from:o.from,to:o.to,method:$('interpolation').value,maxGap:o.maxGap});
         analysisInput={items,alignment:aligned};
-        const traces=[];if($('individuals').checked)items.forEach((x,i)=>traces.push({name:x.r.subject,x:aligned.time,y:aligned.values[i],color:color(x.r)}));
+        const traces=[];if($('individuals').checked)items.forEach((x,i)=>traces.push({name:x.r.subject,subjectId:x.r.id,x:aligned.time,y:aligned.values[i],color:color(x.r)}));
         if($('average').checked)traces.push({name:'Media ± DS',x:aligned.time,y:aligned.summary.map(x=>x.mean),band:aligned.summary.map(x=>x.sd),color:'#312b79',bold:true});
         plot(traces,{hover:x=>{const i=Math.max(0,Math.min(aligned.time.length-1,Math.round((x-aligned.time[0])/aligned.step))),s=aligned.summary[i];return `Tempo: ${fmt(s.time)} s\nMedia: ${fmt(s.mean)} · DS: ${fmt(s.sd)}\nSoggetti disponibili: ${s.n}`;}});
+        restoreIndividualTraces=()=>{$('chart').replaceChildren();plot(traces);};
+        revealIndividualTraces=()=>{const individual=items.map((x,i)=>({name:x.r.subject,subjectId:x.r.id,x:aligned.time,y:aligned.values[i],color:color(x.r)}));const full=[...individual,...traces.filter(t=>!t.subjectId)];$('chart').replaceChildren();plot(full);};
         $('chartNote').textContent=`Passo: ${fmt(aligned.step)} s · ${aligned.time.length} istanti · ${items.length} soggetti utilizzabili. La banda indica ±1 DS. Modifica l’intervallo di analisi per ingrandire una porzione temporale.`;
         table(['Tempo [s]','Media','DS','N soggetti'],aligned.summary.map(s=>[fmt(s.time),fmt(s.mean),fmt(s.sd),s.n]));
         exportRows=aligned.summary.map((s,i)=>({...provenance,epoch,time:s.time,mean:s.mean,sd:s.sd,n:s.n,grid_step:aligned.step,range:$('range').value,interpolation:$('interpolation').value,max_gap:o.maxGap??'auto:3*native_median_step',downsample_filter:'boxcar',...Object.fromEntries(items.map((x,j)=>[`subject:${x.r.subject}`,aligned.values[j][i]]))}));
@@ -108,13 +124,13 @@
         if(!epochs.length)throw new Error('Seleziona almeno un’epoca da confrontare.');
         epochs.forEach(e=>{const items=prepared(records,e,metric,o,warnings);const values=[];for(const x of items){const a=C.aggregate(x.series,method,o.from,o.to,C.gapLimit(x.series,o.maxGap));if(a.value===null)warnings.push(`${x.r.subject} · ${e}: nessun riepilogo calcolabile nell’intervallo.`);else values.push(a.value);rows.push({...provenance,epoch:e,subject:x.r.subject,aggregation:method,value:a.value,n_samples:a.n,valid_duration_s:a.duration,baseline_n:x.stats?.n??'',baseline_center:x.stats?.center??'',baseline_scale:x.stats?.scale??'',max_gap:o.maxGap??'auto:3*native_median_step'});}stats.push({epoch:e,mean:C.mean(values),sd:C.sd(values),n:values.length});});
         analysisInput={rows,epochs};
-        const traces=records.map(r=>({name:r.subject,color:color(r),x:epochs.map((_,i)=>i),y:epochs.map(e=>rows.find(x=>x.subject===r.subject&&x.epoch===e)?.value??null)}));traces.push({name:'Media tra soggetti ± DS',color:'#312b79',bold:true,x:epochs.map((_,i)=>i),y:stats.map(s=>s.mean),band:stats.map(s=>s.sd)});
+        const traces=records.map(r=>({name:r.subject,subjectId:r.id,color:color(r),x:epochs.map((_,i)=>i),y:epochs.map(e=>rows.find(x=>x.subject===r.subject&&x.epoch===e)?.value??null)}));traces.push({name:'Media tra soggetti ± DS',color:'#312b79',bold:true,x:epochs.map((_,i)=>i),y:stats.map(s=>s.mean),band:stats.map(s=>s.sd)});
         plot(traces,{categories:epochs,xLabel:'Epoca / stimolo'});table(['Epoca','Media tra soggetti','DS tra soggetti','N soggetti'],stats.map(s=>[s.epoch,fmt(s.mean),fmt(s.sd),s.n]));
         $('chartNote').textContent=`${$('aggregation').selectedOptions[0].textContent} sui campioni originali normalizzati. Ogni punto piccolo è un soggetto; il punto grande è la media tra soggetti. Il CSV include risultati individuali e di gruppo.`;
         exportRows=[...rows.map(r=>({row_type:'subject',...r,group_mean:null,group_sd:null,group_n:null})),...stats.map(s=>({row_type:'group',...provenance,epoch:s.epoch,subject:'',aggregation:method,value:null,n_samples:null,valid_duration_s:null,baseline_n:'',baseline_center:'',baseline_scale:'',max_gap:o.maxGap??'auto:3*native_median_step',group_mean:s.mean,group_sd:s.sd,group_n:s.n}))];
       }
       $('export').disabled=!exportRows.length;
-      document.dispatchEvent(new CustomEvent('metrics-ready',{detail:{mode,dataset,records,metric,epoch,o,analysisInput,exportRows,prepared,plot,render}}));
+      document.dispatchEvent(new CustomEvent('metrics-ready',{detail:{mode,dataset,records,metric,epoch,o,analysisInput,exportRows,prepared,plot,render,setVisualIsolation}}));
     }catch(e){$('errors').textContent=e.message;}
     for(const message of [...new Set(warnings)])$('warnings').append(node('p',message));
   }
