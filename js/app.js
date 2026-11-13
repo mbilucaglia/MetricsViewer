@@ -1,0 +1,135 @@
+(function(){
+  'use strict';
+  const C=MetricsCore,$=id=>document.getElementById(id),palette=['#514691','#248d92','#c17b40','#b55488','#608a4a','#537bc3','#986240','#877fa4'];
+  let dataset=null,selected=new Set(),mode='series',exportRows=[],generation=0;
+  let summaryEpochs=new Set(),knownEpochs=new Set();
+  const node=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
+  const fmt=x=>C.finite(x)?Number(x.toPrecision(6)).toString():'—';
+  function number(id,fallback){const v=$(id).value.trim();if(!v)return fallback;const n=Number(v);if(!Number.isFinite(n))throw new Error('Valore numerico non valido.');if(n<0)throw new Error('Tempi e intervalli devono essere non negativi.');return n;}
+  const allEpochs=()=>[...new Set(dataset.recordings.flatMap(r=>r.epochs.map(e=>e.id)))];
+  const allMetrics=()=>[...new Set(dataset.recordings.flatMap(r=>r.epochs.flatMap(e=>Object.keys(e.metrics))))];
+  function options(id,values){const previous=$(id).value;$(id).replaceChildren(...values.map(v=>{const o=node('option',v);o.value=v;return o;}));if(values.includes(previous))$(id).value=previous;$(id).disabled=!values.length;}
+  function filterEpochs(){
+    for(const [search,select]of [['epochSearch','epoch'],['baselineSearch','baseline']]){
+      const query=$(search).value.toLocaleLowerCase();for(const option of $(select).options)option.hidden=!option.textContent.toLocaleLowerCase().includes(query);
+    }
+    const query=$('summaryEpochSearch').value.toLocaleLowerCase();for(const row of $('epochChecks').children)row.hidden=!row.textContent.toLocaleLowerCase().includes(query);
+    $('epochSelectionCount').textContent=`${summaryEpochs.size} epoche selezionate`;
+  }
+  function epochCheckboxes(){
+    const epochs=dataset?allEpochs():[];summaryEpochs=new Set(epochs.filter(e=>summaryEpochs.has(e)||!knownEpochs.has(e)));knownEpochs=new Set(epochs);
+    $('epochChecks').replaceChildren();for(const epoch of epochs){const label=node('label',undefined,'check-option'),check=node('input');check.type='checkbox';check.checked=summaryEpochs.has(epoch);check.setAttribute('aria-label',`Confronta epoca ${epoch}`);check.onchange=()=>{check.checked?summaryEpochs.add(epoch):summaryEpochs.delete(epoch);filterEpochs();render();};label.append(check,document.createTextNode(epoch));$('epochChecks').append(label);}filterEpochs();
+  }
+  function refresh(){
+    options('metric',dataset?allMetrics():[]);options('epoch',dataset?allEpochs():[]);options('baseline',dataset?allEpochs():[]);
+    epochCheckboxes();
+    $('subjects').replaceChildren();
+    for(const [i,r] of (dataset?.recordings||[]).entries()){
+      const row=node('div',undefined,'subject-row'),label=node('label');row.dataset.recordingId=r.id;label.style.display='contents';const check=node('input');check.type='checkbox';check.checked=selected.has(r.id);check.setAttribute('aria-label',`Seleziona ${r.subject}`);
+      check.onchange=()=>{check.checked?selected.add(r.id):selected.delete(r.id);render();};
+      const text=node('span',r.subject);text.style.color=palette[i%palette.length];label.append(check,text);const remove=node('button','×');remove.title=`Rimuovi ${r.subject}`;remove.setAttribute('aria-label',remove.title);remove.onclick=()=>{dataset.recordings=dataset.recordings.filter(x=>x.id!==r.id);selected.delete(r.id);if(!dataset.recordings.length)dataset=null;refresh();};row.append(label,remove);$('subjects').append(row);
+    }
+    $('status').textContent=dataset?`${dataset.recordings.length} soggetti · ${allMetrics().length} metriche · ${allEpochs().length} epoche. I nuovi file vengono aggiunti al dataset.`:'Nessun file caricato.';
+    render();
+  }
+  async function load(files){
+    const ticket=++generation;$('errors').textContent='';
+    try{
+      const inputs=await Promise.all([...files].map(async file=>{if(!file.name.toLowerCase().endsWith('.json'))throw new Error(`${file.name}: scegliere un file JSON.`);if(file.size>100*1024*1024)throw new Error(`${file.name}: file oltre il limite di 100 MB.`);try{return C.validate(JSON.parse(await file.text()));}catch(e){throw new Error(`${file.name}: ${e.message}`);}}));
+      if(ticket!==generation)return;
+      if(!inputs.length)return;
+      const merged=C.merge(dataset?[dataset,...inputs]:inputs);for(const d of inputs)for(const r of d.recordings)selected.add(r.id);dataset=merged;refresh();
+    }catch(e){if(ticket===generation)$('errors').textContent=e.message;}
+  }
+  function config(){
+    const o={norm:$('normalization').value,baseline:$('baseline').value,baseFrom:number('baseFrom',-Infinity),baseTo:number('baseTo',Infinity),from:number('from',-Infinity),to:number('to',Infinity),maxGap:number('gap',null),step:number('step',null),scaled:$('madScale').value==='scaled'};
+    if(o.from>o.to||o.baseFrom>o.baseTo)throw new Error('L’inizio dell’intervallo deve precedere la fine.');
+    if(o.step!==null&&o.step<=0||o.maxGap!==null&&o.maxGap<=0)throw new Error('Passo griglia e lacuna massima devono essere positivi.');return o;
+  }
+  function prepared(records,epoch,metric,o,warnings){
+    return records.flatMap(r=>{
+      const s=r.epochs.find(e=>e.id===epoch)?.metrics[metric];
+      if(!s?.time.length){warnings.push(`${r.subject} · ${epoch}: metrica assente o vuota.`);return [];}
+      try{const b=r.epochs.find(e=>e.id===o.baseline)?.metrics[metric];const result=C.normalize(s,b,o.norm,o.baseFrom,o.baseTo,o.scaled);if(!result.series.values.some(C.finite))throw new Error('Nessun valore valido.');return [{r,...result}];}
+      catch(e){warnings.push(`${r.subject} · ${epoch}: ${e.message}`);return [];}
+    });
+  }
+  const svgNS='http://www.w3.org/2000/svg';
+  function svgEl(tag,attrs={},text){const e=document.createElementNS(svgNS,tag);for(const[k,v]of Object.entries(attrs))e.setAttribute(k,v);if(text!==undefined)e.textContent=text;return e;}
+  function plot(traces,{categories=null,xLabel='Tempo dall’inizio dell’epoca [s]',hover=null,target='chart',title=null}={}){
+    const chart=$(target);
+    const w=900,h=410,p={l:65,r:25,t:25,b:70};
+    let xmin=Infinity,xmax=-Infinity,ymin=Infinity,ymax=-Infinity;
+    for(const tr of traces)for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i]))continue;const d=tr.band?.[i]||0;xmin=Math.min(xmin,tr.x[i]);xmax=Math.max(xmax,tr.x[i]);ymin=Math.min(ymin,tr.y[i]-d);ymax=Math.max(ymax,tr.y[i]+d);}
+    if(!Number.isFinite(ymin)){chart.append(node('p','Nessun valore disponibile nell’intervallo selezionato.','empty-state'));return;}
+    if(categories){xmin=-0.4;xmax=categories.length-0.6;}else if(xmin===xmax){xmin-=.5;xmax+=.5;}
+    const pad=(ymax-ymin)*.12||Math.max(Math.abs(ymax)*.1,1);ymin-=pad;ymax+=pad;
+    const X=x=>p.l+(x-xmin)/(xmax-xmin)*(w-p.l-p.r),Y=y=>h-p.b-(y-ymin)/(ymax-ymin)*(h-p.t-p.b);
+    const svg=svgEl('svg',{viewBox:`0 0 ${w} ${h}`,role:'img','aria-label':title||$('chartTitle').textContent});
+    for(let i=0;i<=5;i++){const y=ymin+(ymax-ymin)*i/5;svg.append(svgEl('line',{x1:p.l,x2:w-p.r,y1:Y(y),y2:Y(y),class:'grid-line'}),svgEl('text',{x:p.l-10,y:Y(y)+4,'text-anchor':'end'},fmt(y)));}
+    const ticks=categories?categories.map((c,i)=>[i,c]):Array.from({length:6},(_,i)=>{const x=xmin+(xmax-xmin)*i/5;return[x,fmt(x)];});
+    for(const[x,label]of ticks){const t=svgEl('text',{x:X(x),y:h-p.b+24,'text-anchor':'middle'},label.length>22?label.slice(0,20)+'…':label);t.append(svgEl('title',{},label));svg.append(t);}
+    svg.append(svgEl('text',{x:w/2,y:h-12,'text-anchor':'middle'},xLabel));
+    for(const tr of traces){
+      if(tr.band && !categories){let run=[];const flush=()=>{if(run.length>1){const pts=run.map(i=>`${X(tr.x[i])},${Y(tr.y[i]+tr.band[i])}`).concat([...run].reverse().map(i=>`${X(tr.x[i])},${Y(tr.y[i]-tr.band[i])}`)).join(' ');svg.append(svgEl('polygon',{points:pts,fill:tr.color,opacity:'.12'}));}run=[];};for(let i=0;i<tr.x.length;i++){if(C.finite(tr.y[i])&&C.finite(tr.band[i]))run.push(i);else flush();}flush();}
+      if(!categories){let path='',open=false;for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i])){open=false;continue;}path+=`${open?'L':'M'}${X(tr.x[i])},${Y(tr.y[i])} `;open=true;}svg.append(svgEl('path',{d:path,fill:'none',stroke:tr.color,'stroke-width':tr.bold?2.8:1.4,opacity:tr.bold?1:.7}));}
+      if(categories||tr.x.length===1)for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i]))continue;const x=X(tr.x[i]),y=Y(tr.y[i]);if(tr.band&&C.finite(tr.band[i]))svg.append(svgEl('line',{x1:x,x2:x,y1:Y(tr.y[i]-tr.band[i]),y2:Y(tr.y[i]+tr.band[i]),stroke:tr.color,'stroke-width':2}));const circle=svgEl('circle',{cx:x,cy:y,r:tr.bold?6:4,fill:tr.color,opacity:tr.bold?1:.65});circle.append(svgEl('title',{},`${tr.name}: ${fmt(tr.y[i])}`));svg.append(circle);}
+    }
+    if(hover){svg.addEventListener('pointermove',event=>{const rect=svg.getBoundingClientRect(),x=xmin+((event.clientX-rect.left)/rect.width*w-p.l)/(w-p.l-p.r)*(xmax-xmin);$('tooltip').textContent=hover(x);$('tooltip').hidden=false;$('tooltip').style.left=Math.max(5,Math.min(event.clientX+12,window.innerWidth-320))+'px';$('tooltip').style.top=Math.max(5,Math.min(event.clientY+12,window.innerHeight-110))+'px';});svg.addEventListener('pointerleave',()=>{$('tooltip').hidden=true;});}
+    chart.append(svg);const legend=node('div',undefined,'legend');for(const tr of traces){const span=node('span'),dot=node('i');dot.style.background=tr.color;span.append(dot,document.createTextNode(tr.name));legend.append(span);}chart.append(legend);
+  }
+  function table(headers,rows){const t=node('table'),head=node('thead'),tr=node('tr');headers.forEach(h=>tr.append(node('th',h)));head.append(tr);t.append(head);const body=node('tbody');rows.slice(0,500).forEach(row=>{const tr=node('tr');row.forEach(v=>tr.append(node('td',v)));body.append(tr);});t.append(body);$('results').append(t);if(rows.length>500)$('results').append(node('p','Anteprima: prime 500 righe. Il CSV contiene tutti i risultati.','panel-note'));}
+  function render(){
+    document.dispatchEvent(new CustomEvent('metrics-invalidated',{detail:{mode}}));
+    let analysisInput=null;
+    $('errors').textContent='';$('chart').replaceChildren();$('results').replaceChildren();$('warnings').replaceChildren();$('chartNote').textContent='';$('tooltip').hidden=true;exportRows=[];$('export').disabled=true;
+    const normalizing=$('normalization').value!=='none';for(const id of ['baseline','baseFrom','baseTo'])$(id).disabled=!normalizing||!dataset;$('madScale').disabled=$('normalization').value!=='zmad';
+    $('seriesOptions').hidden=mode!=='series';$('summaryOptions').hidden=mode!=='summary';$('seriesTab').classList.toggle('is-active',mode==='series');$('summaryTab').classList.toggle('is-active',mode==='summary');$('seriesTab').setAttribute('aria-pressed',mode==='series');$('summaryTab').setAttribute('aria-pressed',mode==='summary');
+    const records=(dataset?.recordings||[]).filter(r=>selected.has(r.id));$('counts').textContent=`${records.length} selezionati su ${dataset?.recordings.length||0}`;
+    if(!records.length){$('chart').append(node('p',dataset?'Seleziona almeno un soggetto.':'Carica un dataset oppure prova l’esempio.','empty-state'));return;}
+    const warnings=[];
+    try{
+      const o=config(),metric=$('metric').value,epoch=$('epoch').value,unit=o.norm==='percent'?' [%]':o.norm==='none'?'':` [${o.norm==='zscore'?'z-score':'z-MAD'}]`;
+      $('chartTitle').textContent=`${metric}${unit} · ${mode==='series'?epoch:'riepilogo temporale'}`;
+      const color=r=>palette[dataset.recordings.indexOf(r)%palette.length];
+      const provenance={metric,normalization:o.norm,baseline:o.norm==='none'?'':o.baseline,baseline_from:Number.isFinite(o.baseFrom)?o.baseFrom:'',baseline_to:Number.isFinite(o.baseTo)?o.baseTo:'',mad_scale:o.scaled?1.4826:1,analysis_from:Number.isFinite(o.from)?o.from:'',analysis_to:Number.isFinite(o.to)?o.to:''};
+      if(mode==='series'){
+        const items=prepared(records,epoch,metric,o,warnings);if(!items.length)throw new Error('Nessuna serie utilizzabile con queste impostazioni.');
+        const aligned=C.align(items.map(x=>x.series),{range:$('range').value,step:o.step,from:o.from,to:o.to,method:$('interpolation').value,maxGap:o.maxGap});
+        analysisInput={items,alignment:aligned};
+        const traces=[];if($('individuals').checked)items.forEach((x,i)=>traces.push({name:x.r.subject,x:aligned.time,y:aligned.values[i],color:color(x.r)}));
+        if($('average').checked)traces.push({name:'Media ± DS',x:aligned.time,y:aligned.summary.map(x=>x.mean),band:aligned.summary.map(x=>x.sd),color:'#312b79',bold:true});
+        plot(traces,{hover:x=>{const i=Math.max(0,Math.min(aligned.time.length-1,Math.round((x-aligned.time[0])/aligned.step))),s=aligned.summary[i];return `Tempo: ${fmt(s.time)} s\nMedia: ${fmt(s.mean)} · DS: ${fmt(s.sd)}\nSoggetti disponibili: ${s.n}`;}});
+        $('chartNote').textContent=`Passo: ${fmt(aligned.step)} s · ${aligned.time.length} istanti · ${items.length} soggetti utilizzabili. La banda indica ±1 DS. Modifica l’intervallo di analisi per ingrandire una porzione temporale.`;
+        table(['Tempo [s]','Media','DS','N soggetti'],aligned.summary.map(s=>[fmt(s.time),fmt(s.mean),fmt(s.sd),s.n]));
+        exportRows=aligned.summary.map((s,i)=>({...provenance,epoch,time:s.time,mean:s.mean,sd:s.sd,n:s.n,grid_step:aligned.step,range:$('range').value,interpolation:$('interpolation').value,max_gap:o.maxGap??'auto:3*native_median_step',downsample_filter:'boxcar',...Object.fromEntries(items.map((x,j)=>[`subject:${x.r.subject}`,aligned.values[j][i]]))}));
+      }else{
+        const epochs=allEpochs().filter(e=>summaryEpochs.has(e)),method=$('aggregation').value,rows=[],stats=[];
+        if(!epochs.length)throw new Error('Seleziona almeno un’epoca da confrontare.');
+        epochs.forEach(e=>{const items=prepared(records,e,metric,o,warnings);const values=[];for(const x of items){const a=C.aggregate(x.series,method,o.from,o.to,C.gapLimit(x.series,o.maxGap));if(a.value===null)warnings.push(`${x.r.subject} · ${e}: nessun riepilogo calcolabile nell’intervallo.`);else values.push(a.value);rows.push({...provenance,epoch:e,subject:x.r.subject,aggregation:method,value:a.value,n_samples:a.n,valid_duration_s:a.duration,baseline_n:x.stats?.n??'',baseline_center:x.stats?.center??'',baseline_scale:x.stats?.scale??'',max_gap:o.maxGap??'auto:3*native_median_step'});}stats.push({epoch:e,mean:C.mean(values),sd:C.sd(values),n:values.length});});
+        analysisInput={rows,epochs};
+        const traces=records.map(r=>({name:r.subject,color:color(r),x:epochs.map((_,i)=>i),y:epochs.map(e=>rows.find(x=>x.subject===r.subject&&x.epoch===e)?.value??null)}));traces.push({name:'Media tra soggetti ± DS',color:'#312b79',bold:true,x:epochs.map((_,i)=>i),y:stats.map(s=>s.mean),band:stats.map(s=>s.sd)});
+        plot(traces,{categories:epochs,xLabel:'Epoca / stimolo'});table(['Epoca','Media tra soggetti','DS tra soggetti','N soggetti'],stats.map(s=>[s.epoch,fmt(s.mean),fmt(s.sd),s.n]));
+        $('chartNote').textContent=`${$('aggregation').selectedOptions[0].textContent} sui campioni originali normalizzati. Ogni punto piccolo è un soggetto; il punto grande è la media tra soggetti. Il CSV include risultati individuali e di gruppo.`;
+        exportRows=[...rows.map(r=>({row_type:'subject',...r,group_mean:null,group_sd:null,group_n:null})),...stats.map(s=>({row_type:'group',...provenance,epoch:s.epoch,subject:'',aggregation:method,value:null,n_samples:null,valid_duration_s:null,baseline_n:'',baseline_center:'',baseline_scale:'',max_gap:o.maxGap??'auto:3*native_median_step',group_mean:s.mean,group_sd:s.sd,group_n:s.n}))];
+      }
+      $('export').disabled=!exportRows.length;
+      document.dispatchEvent(new CustomEvent('metrics-ready',{detail:{mode,dataset,records,metric,epoch,o,analysisInput,exportRows,prepared,plot,render}}));
+    }catch(e){$('errors').textContent=e.message;}
+    for(const message of [...new Set(warnings)])$('warnings').append(node('p',message));
+  }
+  function demo(){
+    generation++;const recordings=Array.from({length:6},(_,i)=>({id:`demo-${i+1}`,subject:`SBJ_${String(i+1).padStart(2,'0')}`,epochs:['bslaperti','task1','task2'].map((id,e)=>{const dt=[.25,.5,.4][i%3],length=(e?24+i*4:16);const time=Array.from({length:Math.floor(length/dt)+1},(_,j)=>Number((j*dt).toFixed(6)));return {id,metrics:Object.fromEntries(['AWI','FMT','WL'].map((m,k)=>[m,{time,values:time.map(t=>2+k+i*.15+Math.sin(t*.7+i)*.45+(e?e*.7+Math.sin(t*.2)*.3:0))}]))};})}));
+    dataset=C.validate({schema_version:1,time_unit:'s',recordings});selected=new Set(recordings.map(r=>r.id));refresh();$('epoch').value='task1';$('baseline').value='bslaperti';render();
+  }
+  function csvCell(v){let s=v===null||v===undefined?'':String(v);if(typeof v==='string'&&/^[=+@\-\t\r]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';}
+  $('export').onclick=()=>{if(!exportRows.length)return;const headers=[...new Set(exportRows.flatMap(Object.keys))],csv='\uFEFF'+[headers,...exportRows.map(r=>headers.map(k=>r[k]))].map(r=>r.map(csvCell).join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),a=node('a');a.href=url;a.download=`metrics-${mode}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+  $('files').onchange=e=>{load(e.target.files);e.target.value='';};$('demo').onclick=demo;$('clear').onclick=()=>{generation++;dataset=null;selected.clear();refresh();};
+  for(const event of ['dragover','dragenter'])$('drop').addEventListener(event,e=>{e.preventDefault();$('drop').classList.add('is-dragging');});$('drop').ondragleave=()=>$('drop').classList.remove('is-dragging');$('drop').ondrop=e=>{e.preventDefault();$('drop').classList.remove('is-dragging');load(e.dataTransfer.files);};
+  $('all').onclick=()=>{selected=new Set((dataset?.recordings||[]).map(r=>r.id));refresh();};$('none').onclick=()=>{selected.clear();refresh();};$('seriesTab').onclick=()=>{mode='series';render();};$('summaryTab').onclick=()=>{mode='summary';render();};
+  for(const id of ['metric','epoch','normalization','baseline','baseFrom','baseTo','madScale','from','to','range','step','interpolation','gap','individuals','average','aggregation'])$(id).onchange=render;
+  for(const id of ['epochSearch','baselineSearch','summaryEpochSearch'])$(id).oninput=filterEpochs;
+  $('epochsAll').onclick=()=>{summaryEpochs=new Set(dataset?allEpochs():[]);epochCheckboxes();render();};
+  $('epochsNone').onclick=()=>{summaryEpochs.clear();epochCheckboxes();render();};
+  refresh();
+})();

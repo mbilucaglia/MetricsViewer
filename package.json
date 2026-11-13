@@ -1,0 +1,7 @@
+{
+  "name": "metrics-viewer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local-first MATLAB metrics viewer",
+  "scripts": {"test": "node --test tests/core.test.js tests/analysis.test.js", "start": "node server.cjs"}
+}
