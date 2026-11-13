@@ -72,7 +72,7 @@ Richiede MATLAB R2021a o successivo, senza toolbox aggiuntivi. Verificato con R2
 - `metrics.<nome>{k}` e `metrics_time.<nome>{k}` della struct MATLAB sono associati a `epoch_id(k)`. Per ciascuna metrica devono esserci tante celle quante epoche.
 - `Fs`, dati EEG grezzi, percorsi locali e canali non sono necessari per questo formato. Sono conservati come metadati solo `date` e `origin`, quando presenti.
 
-Limiti dell'importazione: 100 MB per file; griglia fino a 50.000 istanti e 2 milioni di celle soggetto × tempo. Aumentare il passo per dataset più grandi.
+Nessun limite fisso in MB per i JSON importati. Lettura e parsing avvengono in memoria nel browser: la dimensione gestibile dipende dalla memoria disponibile e dai dati. La griglia di allineamento resta limitata a 50.000 istanti e 2 milioni di celle soggetto × tempo; aumentare il passo per griglie più grandi.
 
 ## Normalizzazione e riepiloghi
 

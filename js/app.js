@@ -42,7 +42,6 @@
         await job.step(`Lettura metriche in corso: ${file.name}`,{value:index,max:list.length});
         if(ticket!==generation)return;
         if(!file.name.toLowerCase().endsWith('.json'))throw new Error(`${file.name}: scegliere un file JSON.`);
-        if(file.size>100*1024*1024)throw new Error(`${file.name}: file oltre il limite di 100 MB.`);
         const text=await file.text();
         await job.step(`Verifica delle metriche: ${file.name}`,{value:index,max:list.length});
         if(ticket!==generation)return;
