@@ -114,19 +114,34 @@
   async function runPairwise({subjects,times,groupNames,permutations=5000,seed=12345,onProgress=()=>{},isCancelled=()=>false}){
     const count=groupNames.length,pairs=[];
     for(let a=0;a<count;a++)for(let b=a+1;b<count;b++)pairs.push([a,b]);
-    if(!pairs.length)throw new Error('Servono almeno due gruppi.');
+    if(!pairs.length||!times.length||subjects.some(s=>!Number.isInteger(s.groupIndex)||s.groupIndex<0||s.groupIndex>=count||s.values.length!==times.length||s.values.some(x=>!Number.isFinite(x))))throw new Error('Gruppi e matrice completa non validi.');
+    if(groupNames.some((_,i)=>subjects.filter(s=>s.groupIndex===i).length<2))throw new Error('Servono almeno due soggetti per gruppo.');
+    if(!Number.isInteger(permutations)||permutations<1||!Number.isInteger(seed))throw new Error('Parametri delle permutazioni non validi.');
     if(subjects.length*times.length*permutations*pairs.length>300000000)throw new Error('Troppi confronti: riduci epoche o permutazioni.');
-    const results=[];
-    for(let i=0;i<pairs.length;i++){
-      const [a,b]=pairs[i],subset=subjects.filter(s=>s.groupIndex===a||s.groupIndex===b).map(s=>({...s,groupIndex:s.groupIndex===a?0:1}));
-      const points=await run({subjects:subset,times,mode:'multi',permutations,seed:(seed+i)>>>0,isCancelled,onProgress:done=>onProgress(i*permutations+done,pairs.length*permutations)});
-      points.forEach((p,j)=>{
-        const left=subset.filter(s=>s.groupIndex===0).map(s=>s.values[j]),right=subset.filter(s=>s.groupIndex===1).map(s=>s.values[j]);
-        const diff=left.reduce((a,b)=>a+b,0)/left.length-right.reduce((a,b)=>a+b,0)/right.length;
-        results.push({...p,statistic:Math.sign(diff)*Math.sqrt(p.statistic),meanDifference:diff,pAdjusted:Math.min(1,p.pAdjusted*pairs.length),correction:'max-|T| sulle epoche × Bonferroni sulle coppie',test:'t gruppi indipendenti (permutazioni)',groupA:groupNames[a],groupB:groupNames[b],groupIndexA:a,groupIndexB:b,epochIndex:j,n:subset.length,nA:left.length,nB:right.length,df1:subset.length-2,df2:null});
-      });
+    const average=v=>v.reduce((a,b)=>a+b,0)/v.length;
+    const calculate=assignment=>{
+      const columns=times.map((_,j)=>{const groups=Array.from({length:count},()=>[]);subjects.forEach((s,i)=>groups[assignment[i]].push(s.values[j]));return groups;});
+      return pairs.flatMap(([a,b])=>columns.map(groups=>{const difference=average(groups[a])-average(groups[b]);return {statistic:Math.sign(difference)*Math.sqrt(statistic([groups[a],groups[b]],'multi')),difference};}));
+    };
+    const observed=calculate(subjects.map(s=>s.groupIndex)),raw=new Uint32Array(observed.length),adjusted=new Uint32Array(observed.length);
+    let state=seed>>>0;
+    const random=()=>{state+=0x6D2B79F5;let t=state;t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);return((t^(t>>>14))>>>0)/4294967296;};
+    const exceeds=(a,b)=>a>=b||(Number.isFinite(a)&&Number.isFinite(b)&&Math.abs(a-b)<=1e-12*Math.max(1,b));
+    const batch=Math.max(1,Math.min(100,Math.floor(20000/(subjects.length*times.length*pairs.length))));
+    for(let start=0;start<permutations;start+=batch){
+      if(isCancelled())throw new Error('Analisi annullata: dati o impostazioni modificati.');
+      const stop=Math.min(permutations,start+batch);
+      for(let iteration=start;iteration<stop;iteration++){
+        const plan=createPermutationPlan(subjects,'multi',random),permuted=calculate(plan.groupBySubjectIndex);let maximum=0;
+        permuted.forEach((p,i)=>{const t=Math.abs(p.statistic);maximum=Math.max(maximum,t);if(exceeds(t,Math.abs(observed[i].statistic)))raw[i]++;});
+        observed.forEach((p,i)=>{if(exceeds(maximum,Math.abs(p.statistic)))adjusted[i]++;});
+      }
+      onProgress(stop,permutations);await new Promise(resolve=>setTimeout(resolve,0));
     }
-    return results;
+    return pairs.flatMap(([a,b],pairIndex)=>times.map((time,j)=>{
+      const i=pairIndex*times.length+j,nA=subjects.filter(s=>s.groupIndex===a).length,nB=subjects.filter(s=>s.groupIndex===b).length;
+      return {time,statistic:observed[i].statistic,meanDifference:observed[i].difference,pUncorrected:(raw[i]+1)/(permutations+1),pAdjusted:(adjusted[i]+1)/(permutations+1),correction:'max-|T| congiunto: coppie × epoche',test:'t gruppi indipendenti (permutazioni)',groupA:groupNames[a],groupB:groupNames[b],groupIndexA:a,groupIndexB:b,epochIndex:j,n:nA+nB,nA,nB,df1:nA+nB-2,df2:null};
+    }));
   }
 
   const api = Object.freeze({ run, statistic, runPairwise });

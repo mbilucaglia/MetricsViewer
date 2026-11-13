@@ -82,7 +82,7 @@ test('independent post-hoc preserve pair sizes, direction, max correction and re
     const row=result[pair*2],a=row.groupIndexA,b=row.groupIndexB;
     const subset=subjects.filter(s=>s.groupIndex===a||s.groupIndex===b).map(s=>({...s,groupIndex:s.groupIndex===a?0:1}));
     const ref=await P.run({subjects:subset,times:[0,1],mode:'multi',permutations:199,seed:51+pair});
-    assert.equal(row.pAdjusted,Math.min(1,ref[0].pAdjusted*3));assert.equal(row.pUncorrected,ref[0].pUncorrected);
+    assert.ok(row.pAdjusted>=row.pUncorrected);assert.equal(row.pAdjusted,result[pair*2+1].pAdjusted);
     assert.ok(row.statistic<0);assert.equal(row.nA,2);assert.equal(row.nB,2);assert.equal(row.n,4);
     assert.ok(Math.abs(row.statistic**2-ref[0].statistic)<1e-10);
   }
@@ -92,4 +92,23 @@ test('two independent groups need only the epoch family correction',async()=>{
  const subjects=[1,2,3,5,6].map((v,i)=>({values:[v],groupIndex:i<2?0:1}));
  const opts={subjects,times:[0],groupNames:['A','B'],permutations:99,seed:3};
  const r=await P.runPairwise(opts);assert.equal(r[0].nA,2);assert.equal(r[0].nB,3);assert.equal(r[0].pUncorrected,r[0].pAdjusted);
+});
+
+// Independent reference: all 90 assignments of six subjects to three groups of two.
+test('joint group max-T agrees with exhaustive label assignments across pairs and epochs',async()=>{
+  const values=[[1,8],[2,3],[4,7],[6,2],[10,4],[13,1]], pairs=[[0,1],[0,2],[1,2]];
+  const t=(a,b)=>Math.abs((a[0]+a[1]-b[0]-b[1])/2)/Math.sqrt(((a[0]-a[1])**2+(b[0]-b[1])**2)/4);
+  const stats=groups=>pairs.flatMap(([a,b])=>[0,1].map(j=>t(groups[a].map(i=>values[i][j]),groups[b].map(i=>values[i][j]))));
+  const observed=stats([[0,1],[2,3],[4,5]]), raw=observed.map(()=>0), adjusted=observed.map(()=>0);
+  let total=0;
+  for(let a=0;a<6;a++)for(let b=a+1;b<6;b++){
+    const rest=[0,1,2,3,4,5].filter(i=>i!==a&&i!==b);
+    for(let c=0;c<4;c++)for(let d=c+1;d<4;d++){
+      const perm=stats([[a,b],[rest[c],rest[d]],rest.filter((_,i)=>i!==c&&i!==d)]),max=Math.max(...perm);total++;
+      observed.forEach((v,i)=>{if(perm[i]>=v-1e-12)raw[i]++;if(max>=v-1e-12)adjusted[i]++;});
+    }
+  }
+  assert.equal(total,90);
+  const result=await P.runPairwise({subjects:values.map((v,i)=>({values:v,groupIndex:Math.floor(i/2)})),times:[0,1],groupNames:['A','B','C'],permutations:9999,seed:127});
+  result.forEach((r,i)=>{assert.ok(Math.abs(r.pUncorrected-raw[i]/total)<.025);assert.ok(Math.abs(r.pAdjusted-adjusted[i]/total)<.025);});
 });
