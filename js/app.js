@@ -73,8 +73,10 @@
   }
   const svgNS='http://www.w3.org/2000/svg';
   function svgEl(tag,attrs={},text){const e=document.createElementNS(svgNS,tag);for(const[k,v]of Object.entries(attrs))e.setAttribute(k,v);if(text!==undefined)e.textContent=text;return e;}
+  const barPlots=new Map();
   function plot(traces,{categories=null,xLabel='Tempo dall’inizio dell’epoca [s]',hover=null,target='chart',title=null,bars=false}={}){
     const chart=$(target);
+    if(bars&&categories)barPlots.set(target,{traces,options:{categories,xLabel,hover,target,title,bars}});
     const w=900,h=410,p={l:65,r:25,t:25,b:70};
     let xmin=Infinity,xmax=-Infinity,ymin=Infinity,ymax=-Infinity;
     for(const tr of traces)for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i]))continue;const d=tr.band?.[i]||0;xmin=Math.min(xmin,tr.x[i]);xmax=Math.max(xmax,tr.x[i]);ymin=Math.min(ymin,tr.y[i]-d);ymax=Math.max(ymax,tr.y[i]+d);}
@@ -82,16 +84,25 @@
     if(categories){xmin=-0.5;xmax=categories.length-0.5;}else if(xmin===xmax){xmin-=.5;xmax+=.5;}
     if(bars){ymin=Math.min(0,ymin);ymax=Math.max(0,ymax);}
     const pad=(ymax-ymin)*.12||Math.max(Math.abs(ymax)*.1,1);ymin-=pad;ymax+=pad;
+    if(bars&&categories&&$('summaryYScale').value==='custom'){
+      const low=$('summaryYMin').value.trim(),high=$('summaryYMax').value.trim();
+      if(!low||!high||!Number.isFinite(Number(low))||!Number.isFinite(Number(high))||Number(low)>=Number(high)){
+        chart.append(node('p','Imposta minimo e massimo finiti, con minimo < massimo.','empty-state'));return;
+      }
+      ymin=Number(low);ymax=Number(high);
+    }
     const X=x=>p.l+(x-xmin)/(xmax-xmin)*(w-p.l-p.r),Y=y=>h-p.b-(y-ymin)/(ymax-ymin)*(h-p.t-p.b);
     const svg=svgEl('svg',{viewBox:`0 0 ${w} ${h}`,role:'img','aria-label':title||$('chartTitle').textContent});
     for(let i=0;i<=5;i++){const y=ymin+(ymax-ymin)*i/5;svg.append(svgEl('line',{x1:p.l,x2:w-p.r,y1:Y(y),y2:Y(y),class:'grid-line'}),svgEl('text',{x:p.l-10,y:Y(y)+4,'text-anchor':'end'},fmt(y)));}
     const ticks=categories?categories.map((c,i)=>[i,c]):Array.from({length:6},(_,i)=>{const x=xmin+(xmax-xmin)*i/5;return[x,fmt(x)];});
     for(const[x,label]of ticks){const t=svgEl('text',{x:X(x),y:h-p.b+24,'text-anchor':'middle'},label.length>22?label.slice(0,20)+'…':label);t.append(svgEl('title',{},label));svg.append(t);}
     svg.append(svgEl('text',{x:w/2,y:h-12,'text-anchor':'middle'},xLabel));
+    const clipId=`${target}-plot-clip`;const defs=svgEl('defs'),clip=svgEl('clipPath',{id:clipId});clip.append(svgEl('rect',{x:p.l,y:p.t,width:w-p.l-p.r,height:h-p.t-p.b}));defs.append(clip);svg.append(defs);
     const barTraces=traces.filter(tr=>!tr.isolationOnly),individualBars=traces.filter(tr=>tr.isolationOnly);
-    if(bars)svg.append(svgEl('line',{x1:p.l,x2:w-p.r,y1:Y(0),y2:Y(0),stroke:'#8e87a8','stroke-width':1}));
+    if(bars&&ymin<=0&&ymax>=0)svg.append(svgEl('line',{x1:p.l,x2:w-p.r,y1:Y(0),y2:Y(0),stroke:'#8e87a8','stroke-width':1}));
     for(const tr of traces){
       const traceLayer=svgEl('g',{'data-trace-subject':tr.subjectId||''});
+      if(bars)traceLayer.setAttribute('clip-path',`url(#${clipId})`);
       if(tr.isolationOnly){traceLayer.dataset.isolationOnly='true';traceLayer.style.display='none';}
       svg.append(traceLayer);
       if(bars&&categories){
@@ -118,7 +129,9 @@
     chart.append(svg);const legend=node('div',undefined,'legend');for(const tr of traces){const span=node('span'),dot=node('i');span.dataset.traceSubject=tr.subjectId||'';if(tr.isolationOnly){span.dataset.isolationOnly='true';span.style.display='none';}dot.style.background=tr.color;span.append(dot,document.createTextNode(tr.name));legend.append(span);}chart.append(legend);
   }
   function table(headers,rows){const t=node('table'),head=node('thead'),tr=node('tr');headers.forEach(h=>tr.append(node('th',h)));head.append(tr);t.append(head);const body=node('tbody');rows.slice(0,500).forEach(row=>{const tr=node('tr');row.forEach(v=>tr.append(node('td',v)));body.append(tr);});t.append(body);$('results').append(t);if(rows.length>500)$('results').append(node('p','Anteprima: prime 500 righe. Il CSV contiene tutti i risultati.','panel-note'));}
+  let visualIsolationIds=null;
   function setVisualIsolation(ids){
+    visualIsolationIds=ids;
     if(ids?.length && mode==='series' && !$('individuals').checked){forcedIndividuals=true;$('individuals').checked=true;revealIndividualTraces?.();}
     if(!ids?.length && forcedIndividuals){forcedIndividuals=false;$('individuals').checked=false;restoreIndividualTraces?.();}
     const isolated=ids?.length?new Set(ids):null;
@@ -191,7 +204,19 @@
   $('files').onchange=e=>{load(e.target.files);e.target.value='';};$('demo').onclick=demo;$('clear').onclick=()=>{generation++;dataset=null;selected.clear();refresh();};
   for(const event of ['dragover','dragenter'])$('drop').addEventListener(event,e=>{e.preventDefault();$('drop').classList.add('is-dragging');});$('drop').ondragleave=()=>$('drop').classList.remove('is-dragging');$('drop').ondrop=e=>{e.preventDefault();$('drop').classList.remove('is-dragging');load(e.dataTransfer.files);};
   $('all').onclick=()=>{selected=new Set((dataset?.recordings||[]).map(r=>r.id));refresh();};$('none').onclick=()=>{selected.clear();refresh();};$('seriesTab').onclick=()=>{mode='series';render();};$('summaryTab').onclick=()=>{mode='summary';render();};
-  for(const id of ['metric','epoch','normalization','baseline','baseFrom','baseTo','madScale','from','to','range','step','interpolation','gap','individuals','average','aggregation'])$(id).onchange=render;
+  function updateSummaryScale(){
+    const custom=$('summaryYScale').value==='custom';
+    $('summaryYMin').disabled=$('summaryYMax').disabled=!custom;
+    const low=$('summaryYMin').value.trim(),high=$('summaryYMax').value.trim();
+    const valid=!custom||(low!==''&&high!==''&&Number.isFinite(Number(low))&&Number.isFinite(Number(high))&&Number(low)<Number(high));
+    $('summaryYError').textContent=valid?(custom?'Intervallo applicato ai grafici a barre. Valori e IC fuori scala sono ritagliati; i dati non cambiano.':''):'Inserisci minimo e massimo finiti, con minimo < massimo.';
+    if(!valid)return;
+    for(const [target,saved]of barPlots){if(!$(target).children.length||(target==='chart'&&mode!=='summary'))continue;$(target).replaceChildren();plot(saved.traces,saved.options);}
+    if(mode==='summary')setVisualIsolation(visualIsolationIds);
+
+  }
+  for(const id of ['summaryYScale','summaryYMin','summaryYMax'])$(id).onchange=updateSummaryScale;
+  for(const id of ['metric' ,'epoch','normalization','baseline','baseFrom','baseTo','madScale','from','to','range','step','interpolation','gap','individuals','average','aggregation'])$(id).onchange=render;
   for(const id of ['epochSearch','baselineSearch','summaryEpochSearch'])$(id).oninput=filterEpochs;
   $('epochsAll').onclick=()=>{summaryEpochs=new Set(dataset?allEpochs():[]);epochCheckboxes();render();};
   $('epochsNone').onclick=()=>{summaryEpochs.clear();epochCheckboxes();render();};

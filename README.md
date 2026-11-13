@@ -174,3 +174,5 @@ Un popup modale indica le fasi di lettura e verifica dei JSON, preparazione dei 
 Nei test statistici l’avanzamento mostra il numero effettivo di permutazioni completate. Il pulsante Annulla analisi (o Escape) interrompe il test al successivo blocco di permutazioni. Il popup si chiude anche in caso di errore e riporta il focus al controllo precedente.
 
 L’esportatore include tutti i soggetti dei file selezionati, senza una seconda lista di selezione. Una metrica rappresentata da un singolo NaN (epoca troppo corta) viene esportata come serie vuota; se nell’epoca restano solo metriche non disponibili, l’epoca viene omessa per quel soggetto. I soggetti senza epoche restanti vengono omessi; se non rimane alcun soggetto, l’esportazione termina con un messaggio senza scrivere il file. Il numero di epoche omesse viene riportato nella Command Window.
+
+Nel riepilogo temporale, Scala verticale permette Auto oppure minimo/massimo personalizzati (anche negativi). Il range si applica ai grafici a barre descrittivi e statistici, ritagliando valori e IC fuori scala. Non modifica dati, selezioni, isolamento, test o CSV; i p-value mantengono la propria scala.
