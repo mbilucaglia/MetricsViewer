@@ -3,7 +3,7 @@
   const C=MetricsCore,$=id=>document.getElementById(id),palette=['#514691','#248d92','#c17b40','#b55488','#608a4a','#537bc3','#986240','#877fa4'];
   let dataset=null,selected=new Set(),mode='series',exportRows=[],generation=0;
   let summaryEpochs=new Set(),knownEpochs=new Set(),revealIndividualTraces=null,restoreIndividualTraces=null,forcedIndividuals=false;
-  const node=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
+  const node=(tag,text,cls)=>{const n=document.createElement(tag);if(tag==='button')n.type='button';if(tag==='th')n.setAttribute('scope','col');if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
   const fmt=x=>C.finite(x)?Number(x.toPrecision(6)).toString():'—';
   function number(id,fallback){const v=$(id).value.trim();if(!v)return fallback;const n=Number(v);if(!Number.isFinite(n))throw new Error('Valore numerico non valido.');if(n<0)throw new Error('Tempi e intervalli devono essere non negativi.');return n;}
   const allEpochs=()=>[...new Set(dataset.recordings.flatMap(r=>r.epochs.map(e=>e.id)))];
@@ -92,7 +92,7 @@
       ymin=Number(low);ymax=Number(high);
     }
     const X=x=>p.l+(x-xmin)/(xmax-xmin)*(w-p.l-p.r),Y=y=>h-p.b-(y-ymin)/(ymax-ymin)*(h-p.t-p.b);
-    const svg=svgEl('svg',{viewBox:`0 0 ${w} ${h}`,role:'img','aria-label':title||$('chartTitle').textContent});
+    const svg=svgEl('svg',{viewBox:`0 0 ${w} ${h}`,role:traces.some(t=>t.swarm)?'group':'img','aria-label':title||$('chartTitle').textContent});
     for(let i=0;i<=5;i++){const y=ymin+(ymax-ymin)*i/5;svg.append(svgEl('line',{x1:p.l,x2:w-p.r,y1:Y(y),y2:Y(y),class:'grid-line'}),svgEl('text',{x:p.l-10,y:Y(y)+4,'text-anchor':'end'},fmt(y)));}
     const ticks=categories?categories.map((c,i)=>[i,c]):Array.from({length:6},(_,i)=>{const x=xmin+(xmax-xmin)*i/5;return[x,fmt(x)];});
     for(const[x,label]of ticks){const t=svgEl('text',{x:X(x),y:h-p.b+24,'text-anchor':'middle'},label.length>22?label.slice(0,20)+'…':label);t.append(svgEl('title',{},label));svg.append(t);}
@@ -213,7 +213,7 @@
         analysisInput={rows,epochs};
         const traces=records.map(r=>({name:r.subject,subjectId:r.id,swarm:true,isolationOnly:!$('individuals').checked,color:color(r),x:epochs.map((_,i)=>i),y:epochs.map(e=>rows.find(x=>x.subject===r.subject&&x.epoch===e)?.value??null)}));if($('average').checked)traces.unshift({name:'Media tra soggetti ± DS',bandLabel:'± DS',color:'#514691',bold:true,x:epochs.map((_,i)=>i),y:stats.map(s=>s.mean),band:stats.map(s=>s.sd),n:stats.map(s=>s.n)});
         plot(traces,{categories:epochs,xLabel:'Epoca / stimolo',bars:true});table(['Epoca','Media tra soggetti','DS tra soggetti','IC 95% inferiore','IC 95% superiore','N soggetti'],stats.map(s=>[s.epoch,fmt(s.mean),fmt(s.sd),fmt(C.finite(s.ci)?s.mean-s.ci:null),fmt(C.finite(s.ci)?s.mean+s.ci:null),s.n]));
-        $('chartNote').textContent=`${$('aggregation').selectedOptions[0].textContent} sui campioni originali normalizzati. Soggetti: beeswarm dei riepiloghi individuali; clicca un punto oppure ◎ per evidenziare il soggetto in tutte le epoche. Media ± DS: barre con deviazione standard tra soggetti. Con meno di 2 soggetti la DS non è disponibile. Il CSV include risultati individuali e di gruppo.`;
+        $('chartNote').textContent=`${$('aggregation').selectedOptions[0].textContent} sui campioni normalizzati. Barre: media ± DS tra soggetti; DS disponibile con almeno 2 soggetti. Valori individuali e di gruppo nel CSV.`;
         exportRows=[...rows.map(r=>({row_type:'subject',...r,group_mean:null,group_sd:null,group_ci95_lower:null,group_ci95_upper:null,group_n:null})),...stats.map(s=>({row_type:'group',...provenance,epoch:s.epoch,subject:'',aggregation:method,value:null,n_samples:null,valid_duration_s:null,baseline_n:'',baseline_center:'',baseline_scale:'',max_gap:o.maxGap??'auto:3*native_median_step',group_mean:s.mean,group_sd:s.sd,group_ci95_lower:C.finite(s.ci)?s.mean-s.ci:null,group_ci95_upper:C.finite(s.ci)?s.mean+s.ci:null,group_n:s.n}))];
       }
       $('export').disabled=!exportRows.length;
@@ -236,6 +236,7 @@
     const low=$('summaryYMin').value.trim(),high=$('summaryYMax').value.trim();
     const valid=!custom||(low!==''&&high!==''&&Number.isFinite(Number(low))&&Number.isFinite(Number(high))&&Number(low)<Number(high));
     $('summaryYError').textContent=valid?(custom?'Intervallo applicato ai grafici a barre. Valori e IC fuori scala sono ritagliati; i dati non cambiano.':''):'Inserisci minimo e massimo finiti, con minimo < massimo.';
+    for(const id of ['summaryYMin','summaryYMax'])$(id).setAttribute('aria-invalid',String(!valid));
     if(!valid)return;
     for(const [target,saved]of barPlots){if(!$(target).children.length||(target==='chart'&&mode!=='summary'))continue;$(target).replaceChildren();plot(saved.traces,saved.options);}
     if(mode==='summary')setVisualIsolation(visualIsolationIds);

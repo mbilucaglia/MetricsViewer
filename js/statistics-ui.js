@@ -6,7 +6,7 @@
   let groups=[{id:'g1',name:'Gruppo 1'},{id:'g2',name:'Gruppo 2'}],nextGroup=3;
   const isolation=MetricsIsolation.create();let isolationKey=null,isolationDataset=null,latestFlags=new Map();
   const assignments=new Map(),colors=['#514691','#248d92','#c17b40','#b55488','#608a4a'];
-  const el=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
+  const el=(tag,text,cls)=>{const e=document.createElement(tag);if(tag==='button')e.type='button';if(tag==='th')e.setAttribute('scope','col');if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
   const fmt=x=>C.finite(x)?Number(x.toPrecision(6)).toString():x===Infinity?'∞':x===-Infinity?'−∞':'—';
   const designs={series:'one',summary:'within'};let designMode='series';
   function syncDesign(){
