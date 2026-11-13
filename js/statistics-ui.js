@@ -91,6 +91,12 @@
   $('viewTab').onclick=()=>{subviews[currentMode]='view';subview();};$('statsTab').onclick=()=>{subviews[currentMode]='stats';subview();};
   $('isolateOutliers').onclick=()=>{if(!context)return;isolation.toggleOutliers();subviews[currentMode]='view';subview();updateIsolationControls(context);};
   document.addEventListener('metrics-isolate-subject',e=>{if(!context)return;isolation.toggleSubject(e.detail.id);updateIsolationControls(context);});
+  function dismissIsolation(){if(!context||!isolation.target)return;isolation.reset();updateIsolationControls(context);}
+  document.addEventListener('click',e=>{
+    if(e.target?.closest?.('.trace-isolate-button, #isolateOutliers, #restoreIsolation, #chart [role="button"]'))return;
+    dismissIsolation();
+  });
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')dismissIsolation();});
   $('restoreIsolation').onclick=()=>{isolation.reset();if(context)updateIsolationControls(context);};
   function refreshOutlierFeedback(){if(!context)return;const ctx=context;return MetricsBusy.run('Ricerca degli outlier in corso…',async()=>updateOutliers(ctx)).catch(error=>{$('outlierContext').textContent=error.message;});}
   $('outlierSeries').onchange=refreshOutlierFeedback;$('outlierSummary').onchange=refreshOutlierFeedback;
@@ -131,7 +137,7 @@
       const summaryGroups=design!=='multi'?[{name:'Soggetti selezionati',subjects}]:groups.map((g,i)=>({name:g.name,subjects:subjects.filter(s=>s.groupIndex===i)}));
       const traces=summaryGroups.map((g,i)=>{const columns=matrix.times.map((_,j)=>g.subjects.map(s=>s.values[j]));return {name:`${g.name} (N=${g.subjects.length}) · IC 95%`,color:colors[i%colors.length],bold:true,x:matrix.times,y:columns.map(C.mean),band:columns.map(A.ci95)};});
       const categories=ctx.mode==='summary'?labels:null;
-      ctx.plot(traces,{target:'statsGroupPlot',title:'Medie dei gruppi e intervalli di confidenza al 95%',categories,bars:!!categories,xLabel:categories?'Epoca / stimolo':'Tempo [s]'});
+      ctx.plot(traces,{target:'statsGroupPlot',title:'Medie dei gruppi e intervalli di confidenza al 95%',categories,bars:!!categories,comparisons:within?repeated.comparisons:[],xLabel:categories?'Epoca / stimolo':'Tempo [s]'});
       const pPoints=within?repeated.comparisons:points,pTimes=within?pPoints.map((_,i)=>i):matrix.times,pCategories=within?pPoints.map(p=>p.label):categories;
       ctx.plot([{name:within?(repeated.omnibus?'p post-hoc · max-|T|':'p appaiato'):'p corretto',color:'#312b79',bold:true,x:pTimes,y:pPoints.map(p=>p.pAdjusted)},{name:'Soglia 0,05',color:'#bd253b',x:pTimes,y:pTimes.map(()=>.05)}],{target:'statsPPlot',title:within?'Confronti appaiati tra epoche':'P-value corretti',categories:pCategories,xLabel:within?'Confronto A − B':categories?'Epoca / stimolo':'Tempo [s]'});
       displayResults();$('exportStats').disabled=false;

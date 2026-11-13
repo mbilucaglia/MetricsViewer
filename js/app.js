@@ -74,10 +74,12 @@
   const svgNS='http://www.w3.org/2000/svg';
   function svgEl(tag,attrs={},text){const e=document.createElementNS(svgNS,tag);for(const[k,v]of Object.entries(attrs))e.setAttribute(k,v);if(text!==undefined)e.textContent=text;return e;}
   const barPlots=new Map();
-  function plot(traces,{categories=null,xLabel='Tempo dall’inizio dell’epoca [s]',hover=null,target='chart',title=null,bars=false}={}){
+  function plot(traces,{categories=null,xLabel='Tempo dall’inizio dell’epoca [s]',hover=null,target='chart',title=null,bars=false,comparisons=[]}={}){
     const chart=$(target);
-    if(bars&&categories)barPlots.set(target,{traces,options:{categories,xLabel,hover,target,title,bars}});
-    const w=900,h=410,p={l:65,r:25,t:25,b:70};
+    if(bars&&categories)barPlots.set(target,{traces,options:{categories,xLabel,hover,target,title,bars,comparisons}});
+    const significant=comparisons.filter(c=>Number.isFinite(c.pAdjusted)&&c.pAdjusted<=.05);
+    const bracketSpace=significant.length?32+significant.length*24:0;
+    const w=900,h=410+bracketSpace,p={l:65,r:25,t:25+bracketSpace,b:70};
     let xmin=Infinity,xmax=-Infinity,ymin=Infinity,ymax=-Infinity;
     for(const tr of traces)for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i]))continue;const d=tr.band?.[i]||0;xmin=Math.min(xmin,tr.x[i]);xmax=Math.max(xmax,tr.x[i]);ymin=Math.min(ymin,tr.y[i]-d);ymax=Math.max(ymax,tr.y[i]+d);}
     if(!Number.isFinite(ymin)){chart.append(node('p','Nessun valore disponibile nell’intervallo selezionato.','empty-state'));return;}
@@ -98,6 +100,17 @@
     for(const[x,label]of ticks){const t=svgEl('text',{x:X(x),y:h-p.b+24,'text-anchor':'middle'},label.length>22?label.slice(0,20)+'…':label);t.append(svgEl('title',{},label));svg.append(t);}
     svg.append(svgEl('text',{x:w/2,y:h-12,'text-anchor':'middle'},xLabel));
     const clipId=`${target}-plot-clip`;const defs=svgEl('defs'),clip=svgEl('clipPath',{id:clipId});clip.append(svgEl('rect',{x:p.l,y:p.t,width:w-p.l-p.r,height:h-p.t-p.b}));defs.append(clip);svg.append(defs);
+    if(categories&&comparisons.length){
+      significant.forEach((c,i)=>{
+        const a=categories.indexOf(c.epochA),b=categories.indexOf(c.epochB);if(a<0||b<0)return;
+        const y=p.t-14-i*24,stars=c.pAdjusted<=.001?'***':c.pAdjusted<=.01?'**':'*';
+        const label=`${c.epochA} – ${c.epochB}: ${stars}, p ${c.correction} = ${fmt(c.pAdjusted)}`;
+        const group=svgEl('g',{'aria-label':label,'data-significance':'true'});
+        group.append(svgEl('path',{d:`M${X(a)},${y+6}V${y}H${X(b)}V${y+6}`,stroke:'#35335b',fill:'none','stroke-width':1.5}));
+        const text=svgEl('text',{x:(X(a)+X(b))/2,y:y-4,'text-anchor':'middle'},stars);text.append(svgEl('title',{},label));group.append(text);svg.append(group);
+      });
+      chart.append(node('p',significant.length?'Confronti appaiati: * p ≤ 0,05 · ** p ≤ 0,01 · *** p ≤ 0,001. P-value finali (max-|T| per i post-hoc).':'Nessun confronto appaiato significativo dopo la correzione prevista.','panel-note'));
+    }
     const barTraces=traces.filter(tr=>!tr.subjectId),individualBars=traces.filter(tr=>tr.isolationOnly);
     if(bars&&ymin<=0&&ymax>=0)svg.append(svgEl('line',{x1:p.l,x2:w-p.r,y1:Y(0),y2:Y(0),stroke:'#8e87a8','stroke-width':1}));
     const swarmPositions=new Map();

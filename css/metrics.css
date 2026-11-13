@@ -807,3 +807,5 @@ footer {
     font-size: 17px;
   }
 }
+
+.metrics-chart [data-significance] text { font-size: 18px; font-weight: 700; }
