@@ -5,6 +5,8 @@
   let currentMode='series',context=null,version=0,results=[],resultMeta=null;
   let groups=[{id:'g1',name:'Gruppo 1'},{id:'g2',name:'Gruppo 2'}],nextGroup=3;
   const isolation=MetricsIsolation.create();let isolationKey=null,isolationDataset=null,latestFlags=new Map();
+  const statsExclusions = new Set();
+  let isolatedOutlierIds = null;
   const assignments=new Map(),colors=['#514691','#248d92','#c17b40','#b55488','#608a4a'];
   const el=(tag,text,cls)=>{const e=document.createElement(tag);if(tag==='button')e.type='button';if(tag==='th')e.setAttribute('scope','col');if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
   const fmt=x=>C.finite(x)?Number(x.toPrecision(6)).toString():x===Infinity?'∞':x===-Infinity?'−∞':'—';
@@ -17,7 +19,23 @@
     const within=$('design').value==='within',summary=currentMode==='summary';
     $('statsMethod').textContent=within?'Confronto entro soggetto sulle epoche selezionate: con 2 epoche, t appaiato a due code (prima meno seconda); con 3 o più, F a misure ripetute con permutazione delle epoche entro ciascun soggetto e post-hoc t appaiati su tutte le coppie, corretti max-|T| tramite cambi di segno congiunti per soggetto. Si usano gli stessi soggetti completi per omnibus e post-hoc. Gli IC delle barre descrivono le medie delle epoche, non le differenze appaiate.':summary?'Test per ciascuna epoca contro un valore nullo o tra gruppi indipendenti. Correzione max-|T| / max-F su tutte le epoche selezionate; soggetti con dati completi. Per i gruppi indipendenti: post-hoc a permutazioni tra tutte le coppie, corretti max-|T| congiunto su coppie × epoche. Per confrontare le epoche tra loro scegli il disegno entro soggetto.':'Test di permutazione: t contro un valore nullo o F tra gruppi indipendenti. Correzione max-|T| / max-F su tutti gli istanti analizzati; stessi soggetti a ogni istante.';
   }
-  function subview(){syncDesign();$('seriesModeControls').hidden=currentMode!=='series';$('summaryModeControls').hidden=currentMode!=='summary';const stats=subviews[currentMode]==='stats';$('visualPanel').hidden=stats;$('statsPanel').hidden=!stats;for(const [id,active]of [['viewTab',!stats],['statsTab',stats]]){$(id).classList.toggle('is-active',active);$(id).setAttribute('aria-pressed',String(active));}$('statsTitle').textContent=`Analisi statistiche · ${currentMode==='series'?'Time series':'Riepilogo temporale'}`;}
+  const panels = {
+    view: ['viewTab', 'visualPanel'],
+    stats: ['statsTab', 'statsPanel']
+  };
+  function subview() {
+    syncDesign();
+    $('modeNavigation').setAttribute('aria-labelledby', currentMode === 'series' ? 'seriesTab' : 'summaryTab');
+    $('seriesModeControls').hidden = currentMode !== 'series';
+    $('summaryModeControls').hidden = currentMode !== 'summary';
+    for (const [view, [tabId, panelId]] of Object.entries(panels)) {
+      const active = subviews[currentMode] === view;
+      $(panelId).hidden = !active;
+      $(tabId).classList.toggle('is-active', active);
+      $(tabId).setAttribute('aria-pressed', String(active));
+    }
+    $('statsTitle').textContent = `Analisi statistiche · ${currentMode === 'series' ? 'Serie temporali' : 'Riepilogo temporale'}`;
+  }
   function clearResults(message='Impostazioni aggiornate: esegui nuovamente l’analisi.'){
     globalThis.MetricsSignificantMedia?.clear();
     version++;results=[];resultMeta=null;$('statsResults').replaceChildren();$('statsGroupPlot').replaceChildren();$('statsPPlot').replaceChildren();$('exportStats').disabled=true;$('cancelStats').disabled=true;$('runStats').disabled=!context;$('statsStatus').textContent=message;
@@ -26,7 +44,7 @@
     methodDescription();
     $('groupEditor').hidden=$('design').value!=='multi';$('nullValue').disabled=$('design').value!=='one';$('groupNames').replaceChildren();$('assignments').replaceChildren();
     for(const g of groups){const row=el('div',undefined,'group-name'),input=el('input');input.value=g.name;input.setAttribute('aria-label',`Nomina ${g.name}`);input.onchange=()=>{g.name=input.value.trim()||g.id;clearResults();groupEditor();};row.append(input);if(groups.length>2){const remove=el('button','×');remove.setAttribute('aria-label',`Rimuovi gruppo ${g.name}`);remove.onclick=()=>{groups=groups.filter(x=>x.id!==g.id);for(const[id,v]of assignments)if(v===g.id)assignments.set(id,groups[0].id);clearResults();groupEditor();};row.append(remove);}$('groupNames').append(row);}
-    for(const r of context?.records||[]){if(!assignments.has(r.id))assignments.set(r.id,groups[0].id);const label=el('label',r.subject,'group-assignment'),select=el('select');select.setAttribute('aria-label',`Gruppo di ${r.subject}`);for(const g of groups){const option=el('option',g.name);option.value=g.id;select.append(option);}select.value=assignments.get(r.id);select.onchange=()=>{assignments.set(r.id,select.value);clearResults();};label.append(select);$('assignments').append(label);}
+    for(const r of (context?.records||[]).filter(record => !statsExclusions.has(record.id))){if(!assignments.has(r.id))assignments.set(r.id,groups[0].id);const label=el('label',r.subject,'group-assignment'),select=el('select');select.setAttribute('aria-label',`Gruppo di ${r.subject}`);for(const g of groups){const option=el('option',g.name);option.value=g.id;select.append(option);}select.value=assignments.get(r.id);select.onchange=()=>{assignments.set(r.id,select.value);clearResults();};label.append(select);$('assignments').append(label);}
   }
   function table(target,headers,rows){const t=el('table'),h=el('thead'),tr=el('tr');headers.forEach(x=>tr.append(el('th',x)));h.append(tr);t.append(h);const body=el('tbody');for(const row of rows.slice(0,1000)){const tr=el('tr');row.forEach(x=>tr.append(el('td',x)));body.append(tr);}t.append(body);$(target).append(t);if(rows.length>1000)$(target).append(el('p','Anteprima limitata a 1.000 righe; il CSV contiene tutti i risultati.','panel-note'));}
   function flagLabel(flag){return flag?.status==='flagged'?(flag.flaggedEpochs?`Sì (${flag.flaggedEpochs.length})`:'Sì'):flag?.status==='within'?'No':flag?.status==='disabled'?'Off':'N/D';}
@@ -40,27 +58,141 @@
     if(flag.tested!==undefined)return `${flag.deviating}/${flag.tested} istanti oltre soglia. Nessuna esclusione automatica.`;
     return `Valore: ${fmt(flag.value)}; limiti IQR: ${fmt(flag.lowerFence)} / ${fmt(flag.upperFence)}; z robusto: ${fmt(flag.robustZ)}. Nessuna esclusione automatica.`;
   }
-  function updateIsolationControls(ctx){
+  function updateIsolationControls(ctx, revealSubject = false){
     const drawable=ctx.records.filter(r=>ctx.mode==='series'?ctx.analysisInput.items.some((item,i)=>item.r.id===r.id&&ctx.analysisInput.alignment.values[i].some(C.finite)):ctx.analysisInput.rows.some(row=>row.subject===r.subject&&C.finite(row.value)));
     const ids=isolation.resolve(drawable,latestFlags),target=isolation.target;
     const count=drawable.filter(r=>latestFlags.get(r.id)?.status==='flagged').length;
-    const button=$('isolateOutliers');button.disabled=count===0;button.textContent=`◎ ${target?.type==='outliers'?'Ripristina outlier':'Isola outlier'} (${count})`;button.setAttribute('aria-pressed',String(target?.type==='outliers'));
-    $('restoreIsolation').hidden=!target;
-    $('isolationStatus').textContent=target?`${ids.length} ${ids.length===1?'soggetto evidenziato':'soggetti evidenziati'}. Selezione, medie, CSV e test restano invariati.`:count?`${count} outlier tra i soggetti selezionati. ◎ evidenzia una singola traccia.`:'Nessun outlier tra i soggetti selezionati. ◎ evidenzia una singola traccia.';
-    for(const row of $('subjects').children){
+    const outliersOnly = target?.type === 'outliers';
+    const button = $('isolateOutliers');
+    button.disabled = count === 0;
+    button.textContent = outliersOnly ? 'Ripristina vista' : `◎ Isola outlier (${count})`;
+    button.setAttribute('aria-pressed', String(outliersOnly));
+    $('restoreIsolation').hidden = target?.type !== 'subject';
+    $('isolationStatus').textContent=target?`${ids.length} ${ids.length===1?'soggetto evidenziato':'soggetti evidenziati'}.`:count?`${count} outlier tra i soggetti selezionati. ◎ evidenzia una singola traccia.`:'Nessun outlier tra i soggetti selezionati. ◎ evidenzia una singola traccia.';
+    const list = $('subjects');
+    isolatedOutlierIds = outliersOnly ? new Set(ids) : null;
+    filterSubjects();
+    for(const row of list.children){
       let button=row.querySelector('.trace-isolate-button');
       if(!button){button=el('button','◎','trace-isolate-button');button.type='button';button.onclick=()=>{isolation.toggleSubject(row.dataset.recordingId);subviews[currentMode]='view';subview();updateIsolationControls(context);};row.insertBefore(button,row.lastElementChild);}
       const record=ctx.dataset.recordings.find(r=>r.id===row.dataset.recordingId),selected=drawable.some(r=>r.id===row.dataset.recordingId),active=target?.type==='subject'&&target.id===row.dataset.recordingId;
       button.disabled=!selected;button.setAttribute('aria-pressed',String(active));button.setAttribute('aria-label',`${active?'Ripristina':'Isola'} traccia ${record.subject}`);button.title=selected?`${active?'Ripristina':'Isola'} la traccia di ${record.subject}`:'Seleziona un soggetto con valori visualizzabili per isolare la traccia';
+      row.classList.toggle('is-highlighted', active);
+      if (active && revealSubject && !row.hidden) {
+        const scroller = $('subjectList');
+        const viewport = scroller.getBoundingClientRect();
+        const item = row.getBoundingClientRect();
+        if (item.top < viewport.top) scroller.scrollTop += item.top - viewport.top;
+        else if (item.bottom > viewport.bottom) scroller.scrollTop += item.bottom - viewport.bottom;
+      }
     }
     ctx.setVisualIsolation(ids);
   }
+
+  const subjectSearch = $('subjectSearch');
+  const normalizeSubject = text => text.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLocaleLowerCase();
+
+  function filterSubjects() {
+    const query = normalizeSubject(subjectSearch.value.trim());
+    let found = false;
+    for (const row of $('subjects').children) {
+      const { subject, recordingId } = row.dataset;
+      const matches = !query || normalizeSubject(subject).includes(query) ||
+        normalizeSubject(recordingId).includes(query);
+      row.hidden = !matches || (isolatedOutlierIds !== null && !isolatedOutlierIds.has(recordingId));
+      if (!row.hidden) found = true;
+    }
+    $('subjectSearchEmpty').hidden = !query || found;
+    updateVisibleOutlierAction();
+  }
+
+  subjectSearch.addEventListener('input', () => {
+    filterSubjects();
+    $('subjectList').scrollTop = 0;
+  });
+
+  function visibleOutliersToExclude() {
+    if (!context || isolation.target?.type !== 'outliers') return [];
+    return Array.from($('subjects').children)
+      .filter(row => !row.hidden && !statsExclusions.has(row.dataset.recordingId))
+      .map(row => row.dataset.recordingId);
+  }
+
+  function updateVisibleOutlierAction() {
+    const button = $('excludeVisibleOutliers');
+    const count = visibleOutliersToExclude().length;
+    button.hidden = !context || isolation.target?.type !== 'outliers';
+    button.disabled = count === 0;
+    button.textContent = count ? `Escludi dai test (${count})` : 'Outlier esclusi dai test';
+  }
+  function updateStatsSample() {
+    const list = $('statsSampleList');
+    const records = context?.dataset.recordings ?? [];
+    const selected = new Set(context?.records.map(record => record.id));
+    const canExclude = record => selected.has(record.id) &&
+      latestFlags.get(record.id)?.status === 'flagged' && !statsExclusions.has(record.id);
+
+    $('statsExcludedCount').textContent = statsExclusions.size ? '· ' + statsExclusions.size + ' esclusi' : '';
+    $('excludeFlagged').disabled = !records.some(canExclude);
+    $('includeAllStats').disabled = !statsExclusions.size;
+
+    list.replaceChildren(...records.map((record, index) => {
+      const label = el('label', undefined, 'check-option');
+      const checkbox = el('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = statsExclusions.has(record.id);
+      const flag = latestFlags.get(record.id)?.status === 'flagged' ? ' · Outlier' : '';
+      const unselected = selected.has(record.id) ? '' : ' · Deselezionato nei soggetti';
+      checkbox.onchange = () => {
+        if (checkbox.checked) statsExclusions.add(record.id);
+        else statsExclusions.delete(record.id);
+        statsSampleChanged();
+        list.querySelectorAll('input')[index]?.focus();
+      };
+      label.append(checkbox, el('span', record.subject + flag + unselected));
+      return label;
+    }));
+  }
+
+  function statsSampleChanged() {
+    clearResults('Campione aggiornato. Esegui l’analisi per applicare le esclusioni.');
+    groupEditor();
+    updateStatsSample();
+    updateVisibleOutlierAction();
+  }
+
+  $('excludeVisibleOutliers').onclick = () => {
+    const ids = visibleOutliersToExclude();
+    if (!ids.length) return;
+    for (const id of ids) statsExclusions.add(id);
+    statsSampleChanged();
+    $('isolationStatus').textContent = ids.length === 1
+      ? '1 outlier escluso dai test.'
+      : `${ids.length} outlier esclusi dai test.`;
+    $('isolateOutliers').focus();
+  };
+
+  $('excludeFlagged').onclick = () => {
+    for (const record of context?.records ?? []) {
+      if (latestFlags.get(record.id)?.status === 'flagged') statsExclusions.add(record.id);
+    }
+    statsSampleChanged();
+  };
+
+  $('includeAllStats').onclick = () => {
+    statsExclusions.clear();
+    statsSampleChanged();
+  };
+
+  document.addEventListener('metrics-dataset-replaced', () => {
+    statsExclusions.clear();
+    subjectSearch.value = '';
+  });
   function updateOutliers(ctx){
     const summary=ctx.mode==='summary',method=$(summary?'outlierSummary':'outlierSeries').value;
     $('outlierSeries').parentElement.hidden=summary;$('summaryOutlierControl').hidden=!summary;
     $('outlierContext').textContent=summary?`Flag per ${ctx.metric} · ${ctx.analysisInput.epochs.length} epoche selezionate · ${$('aggregation').selectedOptions[0].textContent}`:`Flag per ${ctx.metric} · ${ctx.epoch}`;
-    $('outlierHelp').textContent=summary?'IQR o MAD sono applicati ai riepiloghi temporali individuali dopo normalizzazione e aggregazione. Ogni metrica × epoca ha soglie proprie; servono almeno 5 soggetti validi. Il badge laterale segnala un soggetto se è outlier in almeno una delle epoche selezionate e indica quante. No significa nessun flag nelle epoche valutabili; N/D significa nessuna epoca valutabile. Il tooltip elenca eventuali epoche non valutabili. IQR: 1,5 × intervallo interquartile. MAD: |z robusto| > 3,5.':'Come in TimeSeriesViewer: IQR 1,5 × o z robusto MAD > 3,5 a ogni istante, con almeno 5 soggetti. Il flag richiede almeno 3 istanti oltre soglia e almeno il 10% degli istanti valutabili. Media temporale IQR confronta le medie pesate nel tempo (almeno 5 soggetti). I confronti usano la griglia comune su tutta l’estensione disponibile, limitata all’intervallo di analisi.';
-    let flags=new Map();const epochFlags=new Map();$('outlierResults').replaceChildren();
+    let flags=new Map();const epochFlags=new Map();
     try{
       if(summary){
         for(const epoch of ctx.analysisInput.epochs){
@@ -68,8 +200,6 @@
           epochFlags.set(epoch,A.scalarFlags(items.map(x=>({id:x.r.id,value:C.aggregate(x.series,$('aggregation').value,ctx.o.from,ctx.o.to,C.gapLimit(x.series,ctx.o.maxGap)).value})),method));
         }
         flags=A.summaryFlags(ctx.dataset.recordings,ctx.analysisInput.epochs,epochFlags,method);
-        $('outlierResults').append(el('h3','Riepiloghi individuali e outlier'));
-        table('outlierResults',['Soggetto','Epoca','Valore','Campioni','Outlier'],ctx.analysisInput.rows.map(r=>[r.subject,r.epoch,fmt(r.value),r.n_samples,flagLabel(epochFlags.get(r.epoch)?.get(ctx.records.find(x=>x.subject===r.subject)?.id))]));
         for(const row of ctx.exportRows){if(row.row_type==='subject'){row.outlier_method=method;row.outlier_status=epochFlags.get(row.epoch)?.get(ctx.records.find(x=>x.subject===row.subject)?.id)?.status||'insufficient';}}
       }else{
         const items=ctx.prepared(ctx.dataset.recordings,ctx.epoch,ctx.metric,ctx.o,[]);
@@ -79,27 +209,57 @@
       }
     }catch(e){$('outlierContext').textContent+=` · Non valutabile: ${e.message}`;}
     latestFlags=flags;
+    updateStatsSample();
     for(const row of $('subjects').children){row.querySelector('.outlier-badge')?.remove();const flag=flags.get(row.dataset.recordingId),badge=el('span',flagLabel(flag),`outlier-badge outlier-${flag?.status||'insufficient'}`);badge.title=flagDescription(flag,summary);badge.setAttribute('aria-label',`Outlier: ${flagLabel(flag)}. ${badge.title}`);row.insertBefore(badge,row.lastElementChild);}
     updateIsolationControls(ctx);
   }
-  document.addEventListener('metrics-invalidated',e=>{currentMode=e.detail?.mode||currentMode;context=null;$('isolateOutliers').disabled=true;$('restoreIsolation').hidden=true;$('isolationStatus').textContent='';for(const button of $('subjects').querySelectorAll('.trace-isolate-button'))button.disabled=true;clearResults('Seleziona dati utilizzabili nella visualizzazione.');$('statsTarget').textContent='Seleziona dati utilizzabili nella visualizzazione.';$('outlierResults').replaceChildren();for(const badge of $('subjects').querySelectorAll('.outlier-badge'))badge.remove();subview();});
+  document.addEventListener('metrics-invalidated',e=>{currentMode=e.detail?.mode||currentMode;context=null;
+    if ('dataset' in (e.detail || {})) {
+      const loaded = new Set(e.detail.dataset?.recordings.map(record => record.id));
+      for (const id of statsExclusions) if (!loaded.has(id)) statsExclusions.delete(id);
+    }
+    updateStatsSample();
+    const isolate = $('isolateOutliers');
+    isolate.disabled = true;
+    isolate.textContent = '◎ Isola outlier (0)';
+    isolate.setAttribute('aria-pressed', 'false');
+    if ('dataset' in (e.detail || {}) && !e.detail.dataset) subjectSearch.value = '';
+    isolatedOutlierIds = null;
+    filterSubjects();
+    $('restoreIsolation').hidden=true;$('isolationStatus').textContent='';for(const button of $('subjects').querySelectorAll('.trace-isolate-button'))button.disabled=true;clearResults('Seleziona dati utilizzabili nella visualizzazione.');$('statsTarget').textContent='Seleziona dati utilizzabili nella visualizzazione.';for(const badge of $('subjects').querySelectorAll('.outlier-badge'))badge.remove();
+    for (const row of $('subjects').children) {
+      row.classList.remove('is-highlighted');
+    }
+    subview();
+  });
   document.addEventListener('metrics-ready',e=>{
     context=e.detail;currentMode=context.mode;const key=JSON.stringify([context.mode,context.metric,context.mode==='series'?context.epoch:null,context.o,$('aggregation').value,context.dataset.recordings.map(r=>r.id),context.analysisInput.epochs,$('range').value,$('interpolation').value]);if(key!==isolationKey||isolationDataset!==context.dataset){isolation.reset();isolationKey=key;isolationDataset=context.dataset;}subview();groupEditor();updateOutliers(context);$('runStats').disabled=false;
     const targets=context.mode==='series'?context.epoch:context.analysisInput.epochs.join(', ');
     $('statsTarget').textContent=`${context.metric} · ${targets} · ${context.records.length} soggetti selezionati · ${$('normalization').selectedOptions[0].textContent}${context.mode==='summary'?' · '+$('aggregation').selectedOptions[0].textContent:''}`;
     methodDescription();
+    $('statsStatus').textContent = 'Imposta il disegno del test ed esegui l’analisi.';
   });
-  $('viewTab').onclick=()=>{subviews[currentMode]='view';subview();};$('statsTab').onclick=()=>{subviews[currentMode]='stats';subview();};
+  for (const [view, [tabId]] of Object.entries(panels)) {
+    $(tabId).onclick = () => {
+      subviews[currentMode] = view;
+      subview();
+    };
+  }
   $('isolateOutliers').onclick=()=>{if(!context)return;isolation.toggleOutliers();subviews[currentMode]='view';subview();updateIsolationControls(context);};
-  document.addEventListener('metrics-isolate-subject',e=>{if(!context)return;isolation.toggleSubject(e.detail.id);updateIsolationControls(context);});
+  document.addEventListener('metrics-isolate-subject', e => {
+    if (!context) return;
+    isolation.toggleSubject(e.detail.id);
+    updateIsolationControls(context, true);
+  });
   function dismissIsolation(){if(!context||!isolation.target)return;isolation.reset();updateIsolationControls(context);}
   document.addEventListener('click',e=>{
-    if(e.target?.closest?.('.trace-isolate-button, #isolateOutliers, #restoreIsolation, #chart [role="button"]'))return;
+    if (isolation.target?.type !== 'subject') return;
+    if(e.target?.closest?.('.trace-isolate-button, #isolateOutliers, #restoreIsolation, .chart-panner, .chart-zoom-tools, #chart [role="button"]'))return;
     dismissIsolation();
   });
   document.addEventListener('keydown',e=>{if(e.key==='Escape')dismissIsolation();});
   $('restoreIsolation').onclick=()=>{isolation.reset();if(context)updateIsolationControls(context);};
-  function refreshOutlierFeedback(){if(!context)return;const ctx=context;return MetricsBusy.run('Ricerca degli outlier in corso…',async()=>updateOutliers(ctx)).catch(error=>{$('outlierContext').textContent=error.message;});}
+  function refreshOutlierFeedback(){if(!context)return;const ctx=context;return MetricsBusy.run('Ricerca degli outlier in corso…',async()=>{if(context===ctx)updateOutliers(ctx);}).catch(error=>{$('outlierContext').textContent=error.message;});}
   $('outlierSeries').onchange=refreshOutlierFeedback;$('outlierSummary').onchange=refreshOutlierFeedback;
   $('design').onchange=()=>{clearResults();groupEditor();};for(const id of ['nullValue','permutations','seed'])$(id).onchange=()=>clearResults();
   $('addGroup').onclick=()=>{groups.push({id:`g${nextGroup}`,name:`Gruppo ${nextGroup++}`});clearResults();groupEditor();};
@@ -116,7 +276,21 @@
     try{
       await job.step('Preparazione dei dati per i test…');if(ticket!==version)return;
       if(!Number.isInteger(permutations)||permutations<100||permutations>50000||(design==='one'&&!Number.isFinite(nullValue))||!Number.isInteger(seed)||seed<0||seed>4294967295)throw new Error('Controlla valore nullo, seed e numero di permutazioni (100–50.000).');
-      const matrix=ctx.mode==='series'?A.completeTimeMatrix(ctx.analysisInput.items,ctx.analysisInput.alignment):A.completeSummaryMatrix(ctx.records,ctx.analysisInput.epochs,ctx.analysisInput.rows);
+      const eligible = ctx.records.filter(record => !statsExclusions.has(record.id));
+      const manuallyExcluded = ctx.records.filter(record => statsExclusions.has(record.id));
+      if (eligible.length < 2) throw new Error('Seleziona almeno 2 soggetti per il campione statistico.');
+      let matrix;
+      let testAlignment = ctx.analysisInput.alignment;
+      if (ctx.mode === 'series') {
+        const items = ctx.analysisInput.items.filter(item => !statsExclusions.has(item.r.id));
+        if (items.length < 2) throw new Error('Servono almeno 2 soggetti con serie utilizzabili.');
+        if (items.length !== ctx.analysisInput.items.length) {
+          testAlignment = C.align(items.map(item => item.series), ctx.analysisInput.alignmentOptions);
+        }
+        matrix = A.completeTimeMatrix(items, testAlignment);
+      } else {
+        matrix = A.completeSummaryMatrix(eligible, ctx.analysisInput.epochs, ctx.analysisInput.rows);
+      }
       if(matrix.subjects.length<2)throw new Error('Servono almeno 2 soggetti con dati completi.');
       if(matrix.times.length*matrix.subjects.length*permutations>300000000)throw new Error('Analisi troppo estesa: riduci permutazioni, intervallo o risoluzione temporale.');
       const subjects=matrix.subjects.map(s=>({...s,groupIndex:groups.findIndex(g=>g.id===assignments.get(s.id))}));
@@ -137,14 +311,14 @@
       results=points.map((p,i)=>({...p,label:within?p.label:labels[i],n:subjects.length}));
       posthoc=posthoc.map(p=>({...p,epochA:labels[p.epochIndex],epochB:labels[p.epochIndex],label:`${labels[p.epochIndex]} · ${p.groupA} − ${p.groupB}`}));
       results.push(...posthoc);
-      resultMeta={view:ctx.mode,metric:ctx.metric,epoch:ctx.mode==='series'?ctx.epoch:'',aggregation:ctx.mode==='summary'?$('aggregation').value:'',normalization:ctx.o.norm,baseline:ctx.o.norm==='none'?'':ctx.o.baseline,baseline_from:Number.isFinite(ctx.o.baseFrom)?ctx.o.baseFrom:'',baseline_to:Number.isFinite(ctx.o.baseTo)?ctx.o.baseTo:'',mad_scale:ctx.o.scaled?1.4826:1,analysis_from:Number.isFinite(ctx.o.from)?ctx.o.from:'',analysis_to:Number.isFinite(ctx.o.to)?ctx.o.to:'',design,null_value:within?'':nullValue,permutations,seed,correction:within?'max-|T| (post-hoc only)':design==='one'?'max-abs-T':'max-F',family:within?'all epoch pairs for selected metric':ctx.mode==='series'?'all tested times':'all tested epochs',included_subjects:subjects.map(s=>s.subject).join('; '),excluded_subjects:ctx.records.filter(r=>!subjects.some(s=>s.id===r.id)).map(r=>r.subject).join('; '),group_assignments:design==='multi'?subjects.map(s=>`${s.subject}:${groups[s.groupIndex].name}`).join('; '):'',grid_step:ctx.mode==='series'?ctx.analysisInput.alignment.step:'',max_gap:ctx.o.maxGap??'auto:3*native_median_step',interpolation:ctx.mode==='series'?$('interpolation').value:'',outlier_method:$(ctx.mode==='series'?'outlierSeries':'outlierSummary').value};
-      const summaryGroups=design!=='multi'?[{name:'Soggetti selezionati',subjects}]:groups.map((g,i)=>({name:g.name,subjects:subjects.filter(s=>s.groupIndex===i)}));
+      resultMeta={view:ctx.mode,metric:ctx.metric,epoch:ctx.mode==='series'?ctx.epoch:'',aggregation:ctx.mode==='summary'?$('aggregation').value:'',normalization:ctx.o.norm,baseline:ctx.o.norm==='none'?'':ctx.o.baseline,baseline_from:Number.isFinite(ctx.o.baseFrom)?ctx.o.baseFrom:'',baseline_to:Number.isFinite(ctx.o.baseTo)?ctx.o.baseTo:'',mad_scale:ctx.o.scaled?1.4826:1,analysis_from:Number.isFinite(ctx.o.from)?ctx.o.from:'',analysis_to:Number.isFinite(ctx.o.to)?ctx.o.to:'',design,null_value:within?'':nullValue,permutations,seed,correction:within?'max-|T| (post-hoc only)':design==='one'?'max-abs-T':'max-F',family:within?'all epoch pairs for selected metric':ctx.mode==='series'?'all tested times':'all tested epochs',included_subjects:subjects.map(s=>s.subject).join('; '),manually_excluded_subjects:manuallyExcluded.map(r=>r.subject).join('; '),excluded_subjects:ctx.records.filter(r=>!subjects.some(s=>s.id===r.id)).map(r=>r.subject).join('; '),group_assignments:design==='multi'?subjects.map(s=>`${s.subject}:${groups[s.groupIndex].name}`).join('; '):'',grid_step:ctx.mode==='series'?testAlignment.step:'',max_gap:ctx.o.maxGap??'auto:3*native_median_step',interpolation:ctx.mode==='series'?$('interpolation').value:'',outlier_method:$(ctx.mode==='series'?'outlierSeries':'outlierSummary').value};
+      const summaryGroups=design!=='multi'?[{name:'Campione statistico',subjects}]:groups.map((g,i)=>({name:g.name,subjects:subjects.filter(s=>s.groupIndex===i)}));
       const traces=summaryGroups.map((g,i)=>{const columns=matrix.times.map((_,j)=>g.subjects.map(s=>s.values[j]));return {name:`${g.name} (N=${g.subjects.length}) · IC 95%`,color:colors[i%colors.length],bold:true,x:matrix.times,y:columns.map(C.mean),band:columns.map(A.ci95)};});
       const categories=ctx.mode==='summary'?labels:null;
-      ctx.plot(traces,{target:'statsGroupPlot',significancePoints:categories?[]:points,significanceStep:ctx.analysisInput.alignment?.step,title:'Medie dei gruppi e intervalli di confidenza al 95%',categories,bars:!!categories,comparisons:within?repeated.comparisons:design==='multi'?posthoc:points.map((p,i)=>({...p,epochA:labels[i],epochB:labels[i],single:true,label:`${labels[i]} contro ${nullValue}`,correction:'max-|T| sulle epoche'})),xLabel:categories?'Epoca / stimolo':'Tempo [s]'});
+      ctx.plot(traces,{target:'statsGroupPlot',significancePoints:categories?[]:points,significanceStep:testAlignment?.step,title:'Medie dei gruppi e intervalli di confidenza al 95%',categories,bars:!!categories,comparisons:within?repeated.comparisons:design==='multi'?posthoc:points.map((p,i)=>({...p,epochA:labels[i],epochB:labels[i],single:true,label:`${labels[i]} contro ${nullValue}`,correction:'max-|T| sulle epoche'})),xLabel:categories?'Epoca / stimolo':'Tempo [s]'});
       displayResults();globalThis.MetricsSignificantMedia?.show(results,resultMeta);$('exportStats').disabled=false;
       const omitted=ctx.mode==='series'?`${matrix.dropped} istanti incompleti omessi.`:`Soggetti incompleti esclusi: ${matrix.excluded.join(', ')||'nessuno'}.`;
-      $('statsStatus').textContent=`Completato: ${points.filter(p=>p.pAdjusted<=.05).length}/${points.length} risultati con p finale ≤ 0,05. N=${subjects.length}. ${omitted} ${posthoc.length?`${posthoc.filter(p=>p.pAdjusted<=.05).length}/${posthoc.length} post-hoc tra gruppi significativi (max-|T| congiunto su coppie × epoche).`:''} ${within?(repeated.omnibus?'Il p omnibus non richiede correzione; i post-hoc sono corretti max-|T| su tutte le coppie, anche se l’omnibus non è significativo.':'Un solo confronto appaiato: nessuna correzione multipla necessaria.'):''} I flag outlier non escludono automaticamente soggetti.`;
+      $('statsStatus').textContent=`Completato: ${points.filter(p=>p.pAdjusted<=.05).length}/${points.length} risultati con p finale ≤ 0,05. N=${subjects.length}. ${omitted} ${posthoc.length?`${posthoc.filter(p=>p.pAdjusted<=.05).length}/${posthoc.length} post-hoc tra gruppi significativi (max-|T| congiunto su coppie × epoche).`:''} ${within?(repeated.omnibus?'Il p omnibus non richiede correzione; i post-hoc sono corretti max-|T| su tutte le coppie, anche se l’omnibus non è significativo.':'Un solo confronto appaiato: nessuna correzione multipla necessaria.'):''} Esclusi dal campione: ${manuallyExcluded.map(r => r.subject).join(', ') || 'nessuno'}.`;
     }catch(e){if(ticket===version)$('statsStatus').textContent=e.message;}
     finally{job.end();if(ticket===version){$('runStats').disabled=!context;$('cancelStats').disabled=true;}}
   };

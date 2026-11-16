@@ -51,3 +51,21 @@ test('significant filter omits nonsignificant rows while media receives correcte
   ui.get('significantOnly').checked=false;ui.get('significantOnly').onchange();assert.equal(ui.get('statsResults').children[0].children[1].children.length,2);
   ui.handlers['metrics-invalidated']({detail:{mode:'series'}});assert.equal(ui.media.at(-1),null);
 });
+
+test('statistical exclusions persist across views and preserve the loaded sample', async () => {
+  const ui = setup();
+  const ctx = ui.ready();
+  const checkbox = ui.get('statsSampleList').children[3].children[0];
+  checkbox.checked = true;
+  checkbox.onchange();
+  await ui.get('runStats').onclick();
+  assert.match(ui.get('statsStatus').textContent, /N=3/);
+  assert.equal(ui.media.at(-1).meta.manually_excluded_subjects, 'd');
+  assert.equal(ctx.records.length, 4);
+
+  ui.ready(['A', 'B']);
+  assert.equal(ui.get('statsSampleList').children[3].children[0].checked, true);
+  ui.get('includeAllStats').onclick();
+  await ui.get('runStats').onclick();
+  assert.match(ui.get('statsStatus').textContent, /N=4/);
+});

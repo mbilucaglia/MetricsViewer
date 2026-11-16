@@ -30,10 +30,13 @@
     return O.getOutlierFlags(subjects,'metric','epoch',method);
   }
   function ci95(values){
-    const n=values.length;if(n<2)return null;
+    return ci95FromSummary(values.length, C.sd(values));
+  }
+  function ci95FromSummary(n, sd){
+    if(n<2)return null;
     const t=[12.706,4.303,3.182,2.776,2.571,2.447,2.365,2.306,2.262,2.228,2.201,2.179,2.16,2.145,2.131,2.12,2.11,2.101,2.093,2.086,2.08,2.074,2.069,2.064,2.06,2.056,2.052,2.048,2.045,2.042];
     const df=n-1,critical=df<=30?t[df-1]:df<=40?2.021:df<=60?2:df<=120?1.98:1.96;
-    return critical*C.sd(values)/Math.sqrt(n);
+    return critical*sd/Math.sqrt(n);
   }
   // Preserve the same subjects at every test in a max-statistic family.
   function completeTimeMatrix(items,alignment){
@@ -45,6 +48,6 @@
     const subjects=records.map(r=>({id:r.id,subject:r.subject,values:epochs.map(e=>rows.find(x=>x.subject===r.subject&&x.epoch===e)?.value??null)}));
     return {times:epochs.map((_,i)=>i),subjects:subjects.filter(s=>s.values.every(C.finite)),excluded:subjects.filter(s=>!s.values.every(C.finite)).map(s=>s.subject)};
   }
-  const api={scalarFlags,summaryFlags,temporalFlags,ci95,completeTimeMatrix,completeSummaryMatrix};
+  const api={scalarFlags,summaryFlags,temporalFlags,ci95,ci95FromSummary,completeTimeMatrix,completeSummaryMatrix};
   if(typeof module!=='undefined')module.exports=api;else root.MetricsAnalysis=api;
 })(globalThis);

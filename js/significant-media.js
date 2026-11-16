@@ -17,32 +17,59 @@
     return intervals(points,step).map(range=>({...range,left:range.start-half,right:range.end+half}));
   }
   if(typeof module==='object'&&module.exports){module.exports={intervals,bands};return;}
-  const $=id=>document.getElementById(id);
-  let context=null,ranges=[],cancel=null;
+  function createViewer(ids={}, {floatingOnly=false}={}){
+  const $=id=>document.getElementById(ids[id]||id);
+  let context=null,ranges=[],cancel=null,activeRange=null,floating=null;
+  const rows=new Map();
+  function closeFloating(){floating?.clear();}
+  function openFloating(index,anchor){
+    const range=ranges[index],entry=rows.get(index);if(!range||!entry)return;
+    if(!floating)floating=root.MetricsFloatingMedia.create({onClose:(closedIndex,row)=>{
+      const closedRange=ranges[closedIndex];
+      if(activeRange===closedRange)cancel?.();
+      for(const player of players)if(player.range===closedRange)player.media.pause();
+      $('significantIntervals').append(row);
+    }});
+    const alreadyOpen=floating.has(index);
+    floating.open(index,anchor,entry.row,range.label||'Frammento estratto');
+    if(!alreadyOpen)for(const player of players)if(player.range===range)player.seekTo(range.peak);
+    $('tooltip').hidden=true;
+  }
+  if(floatingOnly&&ids.significantMedia)document.addEventListener('metrics-markers-rendered',event=>floating?.reanchor(event.detail.anchors));
   const players=new Set();
   function disposePlayers(){for(const p of players)p.dispose();players.clear();}
-  function clear(){cancel?.();disposePlayers();context=null;ranges=[];$('significantMedia').hidden=true;$('significantIntervals').replaceChildren();$('mediaStatus').textContent='';}
+  function clear(){closeFloating();cancel?.();disposePlayers();context=null;ranges=[];rows.clear();$('significantMedia').hidden=true;$('significantIntervals').replaceChildren();$('mediaStatus').textContent='';}
   function show(points,meta){clear();if(meta.view!=='series')return;context=meta;ranges=intervals(points,Number(meta.grid_step));render();}
+  function showRanges(items,meta){clear();context=meta;ranges=items;render();}
   const format=n=>Number(n.toFixed(6)).toString();
   function render(){
     if(!context)return;
-    disposePlayers();$('significantMedia').hidden=false;$('significantIntervals').replaceChildren();
+    closeFloating();disposePlayers();rows.clear();$('significantMedia').hidden=floatingOnly;$('significantIntervals').replaceChildren();
     const available=!!root.MetricsVideo?.source(context.epoch);
-    $('mediaStatus').textContent=!ranges.length?'Nessun istante significativo (p finale ≤ 0,05).':!available?'Associa un video a questa epoca per estrarre frame e clip.':'';
-    for(const r of ranges){
-      const row=document.createElement('div');row.className='significant-interval';row.tabIndex=-1;row.dataset.start=r.start;row.dataset.end=r.end;
-      const label=document.createElement('span');label.textContent=`${format(r.start)}–${format(r.end)} s · ${r.count} istanti · p min ${r.minP.toPrecision(3)}`;row.append(label);
+    $('mediaStatus').textContent=!ranges.length?(context.criterion?'Nessun istante trovato con questi criteri.':'Nessun istante significativo (p finale ≤ 0,05).'):!available?'Associa un video a questa epoca per estrarre frame e clip.':'';
+    for(const [index,r] of ranges.entries()){
+      const row=document.createElement('div');row.className='significant-interval';row.tabIndex=-1;row.dataset.index=index;row.dataset.start=r.start;row.dataset.end=r.end;
+      const label=document.createElement('span');label.textContent=r.label||`${format(r.start)}–${format(r.end)} s · ${r.count} istanti · p min ${r.minP.toPrecision(3)}`;row.append(label);
       if(available)row.append(miniPlayer(r,root.MetricsVideo.source(context.epoch).url));
+      const exportButtons=[];
       for(const [text,kind]of [['Vai al video','seek'],['Frame PNG (p minimo)','frame'],['Clip video','clip']]){
-        const button=document.createElement('button');button.type='button';button.textContent=text;button.disabled=!available||(kind==='clip'&&r.start===r.end);
-        button.onclick=()=>kind==='seek'?root.MetricsVideo.seek(r.peak):extract(r,kind);row.append(button);
+        const button=document.createElement('button');button.type='button';button.textContent=kind==='frame'&&context.criterion?'Frame PNG (istante selezionato)':text;button.disabled=!available||(kind==='clip'&&r.start===r.end);
+        button.onclick=()=>kind==='seek'?root.MetricsVideo.seek(r.peak):extract(r,kind);row.append(button);if(kind!=='seek')exportButtons.push(button);
       }
+      const status=floatingOnly?document.createElement('p'):$('mediaStatus');
+      const cancelButton=floatingOnly?document.createElement('button'):$('cancelMedia');
+      if(floatingOnly){
+        status.className='panel-note';status.setAttribute('role','status');
+        if(!available)status.textContent='Associa un video a questa epoca per estrarre frame e clip.';
+        cancelButton.type='button';cancelButton.className='segment-cancel';cancelButton.textContent='Annulla estrazione';cancelButton.hidden=true;row.append(status,cancelButton);
+      }
+      rows.set(index,{row,status,cancelButton,exportButtons});
       $('significantIntervals').append(row);
     }
   }
   function miniPlayer(range,url){
     const wrapper=document.createElement('div');wrapper.className='segment-player';
-    const media=document.createElement('video');media.src=url;media.preload='metadata';media.playsInline=true;media.setAttribute('aria-label',`Segmento significativo da ${format(range.start)} a ${format(range.end)} secondi`);
+    const media=document.createElement('video');media.src=url;media.preload='metadata';media.playsInline=true;media.setAttribute('aria-label',`Segmento da ${format(range.start)} a ${format(range.end)} secondi`);
     const controls=document.createElement('div');controls.className='segment-controls';
     const play=document.createElement('button');play.type='button';play.textContent='▶ Riproduci';play.disabled=true;
     const seek=document.createElement('input');seek.type='range';seek.min=range.start;seek.max=range.end;seek.step='any';seek.value=range.start;seek.disabled=true;seek.setAttribute('aria-label','Posizione nel segmento');
@@ -60,14 +87,17 @@
     const flushSeek=()=>{if(seekAnimation!==null)cancelAnimationFrame(seekAnimation);seekAnimation=null;media.currentTime=pendingTime;};
     const sync=()=>{animation=null;if(dragging)return;paint(media.currentTime);if(media.currentTime>=range.end){media.pause();media.currentTime=range.end;paint(range.end,true);}else if(!media.paused)animation=requestAnimationFrame(sync);};
     media.addEventListener('loadedmetadata',()=>{
-      if(range.start>=media.duration||range.start<0||range.end>media.duration){note.textContent='Intervallo non coperto dalla durata del video.';return;}
+      if(range.start>=media.duration||range.start<0||range.end>media.duration){note.classList.add('segment-error');note.textContent='Intervallo non coperto dalla durata del video.';return;}
       media.currentTime=pendingTime;paint(pendingTime,true);play.disabled=seek.disabled=range.start===range.end;
     });
     media.addEventListener('play',()=>{root.MetricsVideo?.pause();for(const p of players)if(p.media!==media)p.media.pause();play.textContent='Ⅱ Pausa';stop();sync();});
     media.addEventListener('pause',()=>{stop();play.textContent='▶ Riproduci';if(!dragging)paint(media.currentTime,true);});
     media.addEventListener('seeked',()=>{if(!dragging&&seekAnimation===null)paint(media.currentTime,true);});
-    media.addEventListener('error',()=>{note.textContent='Video non riproducibile.';play.disabled=seek.disabled=true;});
-    play.onclick=()=>{if(!media.paused){media.pause();return;}if(media.currentTime>=range.end||media.currentTime<range.start)media.currentTime=range.start;media.play().catch(e=>{note.textContent=e.message;});};
+    media.addEventListener('error',()=>{note.classList.add('segment-error');note.textContent='Video non riproducibile.';play.disabled=seek.disabled=true;});
+    play.onclick=()=>{if(play.disabled)return;if(!media.paused){media.pause();return;}if(media.currentTime>=range.end||media.currentTime<range.start)media.currentTime=range.start;media.play().catch(e=>{note.classList.add('segment-error');note.textContent=e.message;});};
+    media.tabIndex=0;media.setAttribute('role','button');media.setAttribute('aria-label',`Video ${format(range.start)}–${format(range.end)} secondi. Clic o Invio per riprodurre o mettere in pausa.`);
+    media.addEventListener('click',()=>play.onclick());
+    media.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();play.onclick();}});
     seek.addEventListener('pointerdown',event=>{
       pendingTime=media.currentTime;dragging=true;resumeAfterDrag=!media.paused;media.pause();seek.setPointerCapture(event.pointerId);
     });
@@ -77,7 +107,7 @@
     };
     const finishDrag=()=>{
       if(!dragging)return;flushSeek();dragging=false;paint(pendingTime,true);
-      if(resumeAfterDrag&&pendingTime<range.end)media.play().catch(e=>{note.textContent=e.message;});
+      if(resumeAfterDrag&&pendingTime<range.end)media.play().catch(e=>{note.classList.add('segment-error');note.textContent=e.message;});
       resumeAfterDrag=false;
     };
     seek.addEventListener('pointerup',finishDrag);seek.addEventListener('pointercancel',finishDrag);seek.addEventListener('lostpointercapture',finishDrag);
@@ -88,13 +118,15 @@
     players.add({media,range,seekTo:value=>{pendingTime=value;media.pause();if(media.readyState>=1&&value<media.duration){media.currentTime=value;paint(value,true);}},dispose:()=>{stop();if(seekAnimation!==null)cancelAnimationFrame(seekAnimation);media.pause();media.removeAttribute('src');media.load();}});
     return wrapper;
   }
-  function focusTime(time){
-    const range=ranges.find(r=>time>=r.start&&time<=r.end);if(!range)return;
+  function focusTime(time,index=null,anchor=null){
+    const range=Number.isInteger(index)?ranges[index]:ranges.find(r=>time>=r.start&&time<=r.end);if(!range)return;
+    if(floatingOnly&&anchor)openFloating(ranges.indexOf(range),anchor);
     root.MetricsVideo?.pause();
     for(const player of players){player.media.pause();if(player.range===range)player.seekTo(time);}
+    if(floatingOnly)return;
     const rows=$('significantIntervals').children;
-    for(const row of rows){
-      const selected=Number(row.dataset.start)===range.start&&Number(row.dataset.end)===range.end;
+    for(const [rowIndex,row] of Array.from(rows).entries()){
+      const selected=Number.isInteger(index)?rowIndex===index:Number(row.dataset.start)===range.start&&Number(row.dataset.end)===range.end;
       row.classList.toggle('is-selected',selected);
       if(selected){row.scrollIntoView({block:'center',behavior:'smooth'});row.focus({preventScroll:true});}
     }
@@ -114,9 +146,12 @@
     if(cancel)return;
     for(const player of players)player.media.pause();
     const meta=context,source=root.MetricsVideo?.source(meta.epoch);if(!source)return;
-    const controller=new AbortController(),signal=controller.signal;cancel=()=>controller.abort();
-    $('cancelMedia').hidden=false;$('cancelMedia').onclick=cancel;
-    for(const button of $('significantIntervals').querySelectorAll('button'))button.disabled=true;
+    const entry=rows.get(ranges.indexOf(range));if(!entry)return;
+    const {status,cancelButton}=entry;
+    const controller=new AbortController(),signal=controller.signal;cancel=()=>controller.abort();activeRange=range;
+    cancelButton.hidden=false;cancelButton.onclick=cancel;
+    const buttons=[...rows.values()].flatMap(item=>item.exportButtons).map(button=>({button,disabled:button.disabled}));
+    for(const {button}of buttons)button.disabled=true;
     const media=document.createElement('video');media.muted=true;media.playsInline=true;media.preload='auto';
     let stream=null,recorder=null,animation=null,audio=null;
     try{
@@ -124,7 +159,7 @@
         const Audio=root.AudioContext||root.webkitAudioContext;if(!Audio)throw new Error('Esportazione con audio non supportata da questo browser.');
         audio=new Audio();await audio.resume();
       }
-      $('mediaStatus').textContent='Preparazione del video…';
+      status.textContent='Preparazione del video…';
       await waitEvent(media,'loadeddata',signal,()=>{media.src=source.url;media.load();});
       const start=kind==='frame'?range.peak:range.start,end=range.end;
       if(start<0||start>=media.duration||(kind==='clip'&&end>media.duration))throw new Error('Intervallo fuori dalla durata del video: scegli un video che copra gli istanti significativi.');
@@ -143,7 +178,7 @@
         for(const track of destination.stream.getAudioTracks())stream.addTrack(track);
         recorder=new MediaRecorder(stream,{mimeType:mime});const chunks=[];
         recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
-        $('mediaStatus').textContent=`Registrazione clip ${format(start)}–${format(end)} s in corso… Mantieni la scheda visibile.`;
+        status.textContent=`Registrazione clip ${format(start)}–${format(end)} s in corso… Mantieni la scheda visibile.`;
         await new Promise((resolve,reject)=>{
           let timer;const cleanup=()=>{clearTimeout(timer);signal.removeEventListener('abort',abort);media.removeEventListener('error',error);};
           const fail=e=>{cleanup();reject(e);},abort=()=>fail(new Error('Estrazione annullata.')),error=()=>fail(new Error('Errore durante la registrazione del video.'));
@@ -157,16 +192,18 @@
         const blob=new Blob(chunks,{type:recorder.mimeType});if(!blob.size)throw new Error('La clip generata è vuota.');
         download(blob,`${prefix}-${format(start)}-${format(end)}s.${mime.startsWith('video/mp4')?'mp4':'webm'}`);
       }
-      $('mediaStatus').textContent='Download pronto.';
-    }catch(e){if(context===meta)$('mediaStatus').textContent=e.message;}
+      status.textContent='Download pronto.';
+    }catch(e){if(context===meta)status.textContent=e.message;}
     finally{
       if(animation!==null)cancelAnimationFrame(animation);media.pause();if(recorder?.state==='recording')recorder.stop();stream?.getTracks().forEach(t=>t.stop());media.removeAttribute('src');media.load();
-      if(audio)await audio.close();cancel=null;$('cancelMedia').hidden=true;
-      if(context===meta){const message=$('mediaStatus').textContent;render();$('mediaStatus').textContent=message;}
+      if(audio)await audio.close();cancel=null;activeRange=null;cancelButton.hidden=true;
+      if(context===meta)for(const {button,disabled}of buttons)button.disabled=disabled;
     }
   }
   document.addEventListener('metrics-video-changed',()=>{cancel?.();render();});
   document.addEventListener('visibilitychange',()=>{if(document.hidden){cancel?.();for(const p of players)p.media.pause();}});
-  $('viewTab').addEventListener('click',()=>{for(const p of players)p.media.pause();});
-  root.MetricsSignificantMedia={show,clear,intervals,bands,focusTime};
+  $('viewTab').addEventListener('click',()=>{closeFloating();for(const p of players)p.media.pause();});
+  return {show,showRanges,clear,intervals,bands,focusTime,openFloating,closeFloating};
+  }
+  root.MetricsSignificantMedia={...createViewer({}, {floatingOnly:true}),createViewer};
 })(globalThis);

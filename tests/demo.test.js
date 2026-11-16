@@ -10,7 +10,7 @@ test('offline demo matches the JSON and returns fresh datasets',()=>{
 });
 test('demo button loads real records, resets filters, binds local videos and can be reloaded',async()=>{
   class Element{
-    constructor(tag='div'){this.tagName=tag;this.children=[];this.value='';this.dataset={};this.style={};this.classList={toggle(){},add(){},remove(){}};this.checked=false;}
+    constructor(tag='div'){this.tagName=tag;this.children=[];this.value='';this.dataset={};this.style={setProperty(){}};this.classList={toggle(){},add(){},remove(){}};this.checked=false;}
     append(...c){this.children.push(...c);}
     replaceChildren(...c){this.children=[];this.append(...c);}
     get textContent(){return (this.text||'')+this.children.map(c=>c.textContent||'').join('');}
@@ -22,16 +22,42 @@ test('demo button loads real records, resets filters, binds local videos and can
   }
   const nodes=new Map(),get=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);};
   for(const [id,value]of Object.entries({normalization:'none',madScale:'scaled',range:'intersection',interpolation:'linear',aggregation:'mean'}))get(id).value=value;
-  let ready=null,bindings=null,viewClicks=0;get('viewTab').onclick=()=>viewClicks++;
-  const env={MetricsCore:C,MetricsAnalysis:require('../js/analysis'),URL,document:{baseURI:'file:///C:/Metrics%20Viewer/index.html',getElementById:get,createElement:t=>new Element(t),createElementNS:(_,t)=>new Element(t),createTextNode:text=>({textContent:text}),dispatchEvent:e=>{if(e.type==='metrics-ready')ready=e.detail;}},CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},MetricsBusy:{run:async(_,fn)=>fn({step:async()=>{}})},MetricsVideo:{replaceAssignments:items=>bindings=items,setContext(){},attach(){}}};
-  env.window=env;demo(env);vm.runInNewContext(fs.readFileSync(require.resolve('../js/app'),'utf8'),env);
+  let ready=null,bindings=null,viewClicks=0,invalidations=0,anchors=[];get('viewTab').onclick=()=>viewClicks++;
+  const env={MetricsCore:C,MetricsAnalysis:require('../js/analysis'),URL,document:{baseURI:'file:///C:/Metrics%20Viewer/index.html',getElementById:get,createElement:t=>new Element(t),createElementNS:(_,t)=>new Element(t),createTextNode:text=>({textContent:text}),dispatchEvent:e=>{if(e.type==='metrics-ready')ready=e.detail;if(e.type==='metrics-invalidated')invalidations++;if(e.type==='metrics-markers-rendered')anchors=e.detail.anchors;}},CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},MetricsBusy:{run:async(_,fn)=>fn({step:async()=>{}})},MetricsVideo:{replaceAssignments:items=>bindings=items,setContext(){},attach(){}}};
+  env.window=env;
+  env.Event = Event;
+  demo(env);
+  for (const script of ['chart', 'app']) {
+    vm.runInNewContext(fs.readFileSync(require.resolve('../js/' + script), 'utf8'), env);
+  }
+  assert.equal(get('workspace').hidden, true);
+  assert.equal(get('clear').hidden, true);
   get('normalization').value='zscore';get('from').value='999';get('to').value='1000';get('gap').value='1';
   await get('demo').onclick();
+  assert.equal(get('workspace').hidden, false);
+  assert.equal(get('baselineEpochControl').hidden, true);
+  assert.equal(get('fileLabel').textContent, 'Aggiungi file JSON');
   assert.equal(get('errors').textContent,'');assert.equal(ready.dataset.recordings.length,35);assert.equal(ready.records.length,35);assert.equal(ready.metric,'AWI');assert.equal(ready.epoch,'stim_arancia_');
   assert.equal(get('normalization').value,'none');assert.equal(get('from').value,'');assert.equal(get('gap').value,'');assert.equal(viewClicks,1);
   assert.equal(get('baseline').value,'baseline');assert.equal(bindings.find(v=>v.epoch==='baseline').url,'file:///C:/Metrics%20Viewer/video_demo_baseline.mp4');assert.equal(bindings.length,3);assert.equal(bindings[0].url,'file:///C:/Metrics%20Viewer/video_demo_stim_arancia.mp4');
   get('subjects').children[0].children[1].onclick();assert.equal(ready.dataset.recordings.length,34);
   await get('demo').onclick();assert.equal(ready.dataset.recordings.length,35);
+  const originalContext=ready,originalInvalidations=invalidations,aligned=ready.analysisInput.alignment;
+  ready.markMoments([{peak:aligned.time[0],value:aligned.summary[0].mean,label:'Maximum'}],{name:'Mean',x:aligned.time,y:aligned.summary.map(s=>s.mean),color:'#000'},()=>{});
+  assert.equal(anchors.length,1);
+  for(const [individuals,average] of [[false,true],[true,false],[false,false],[true,true]]){
+    const previous=anchors[0];get('individuals').checked=individuals;get('average').checked=average;
+    await get('individuals').onchange();await get('average').onchange();
+    assert.equal(anchors.length,1);assert.notEqual(anchors[0],previous);assert.equal(ready,originalContext);assert.equal(invalidations,originalInvalidations);
+  }
+  get('normalization').value='zscore';await get('normalization').onchange();
+  assert.equal(get('baselineEpochControl').hidden, false);
+  assert.ok(invalidations>originalInvalidations);assert.equal(anchors.length,0);
+  get('files').focus = () => {};
+  get('clear').onclick();
+  assert.equal(get('workspace').hidden, true);
+  assert.equal(get('fileLabel').textContent, 'Scegli file JSON');
+
 });
 
 

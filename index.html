@@ -22,7 +22,7 @@
                   fill="none"
                   stroke="#c1c2df"
                   stroke-width="2.5"
-                />
+                  />
               </svg>
               <h1>Metrics Viewer</h1>
             </div>
@@ -31,565 +31,502 @@
             </p>
           </div>
           <div class="privacy">
-            <span>●</span> Analisi locale · nessun upload
+            <span aria-hidden="true">●</span> Elaborazione nel browser
           </div>
         </div>
       </header>
       <main id="mainContent" tabindex="-1">
         <section class="card import-panel drop-zone" id="drop">
-          <div class="step-label"><span>01</span> IMPORTA</div>
-          <h2 class="section-title">Importa metriche</h2>
-          <p class="panel-note">
-            Trascina uno o più JSON esportati da MATLAB. Un file per soggetto
-            oppure un dataset completo.
-          </p>
+          <div class="import-copy">
+            <h2 class="section-title">Importa metriche</h2>
+            <p class="panel-note">
+              Trascina uno o più JSON esportati da MATLAB. Un file per soggetto
+              oppure un dataset completo.
+            </p>
+          </div>
           <div class="drop-zone-actions">
             <label class="file file-primary"
-              >＋ Scegli file JSON<input
-                id="files"
-                type="file"
-                accept=".json,application/json"
-                multiple /></label
-            ><button type="button" id="demo">Prova file di esempio</button
-            ><button type="button" id="clear">Svuota dataset</button>
+              ><span id="fileLabel">Scegli file JSON</span><input
+              id="files"
+              type="file"
+              accept=".json,application/json"
+              multiple /></label><button type="button" id="demo">Carica esempio</button><button type="button" id="clear" hidden>Svuota dataset</button>
           </div>
           <span class="drop-status" id="status" aria-live="polite"
             >Nessun file caricato.</span
           >
         </section>
         <div id="errors" class="danger" role="alert"></div>
-        <section class="card settings" aria-label="Impostazioni analisi">
-          <div class="settings-primary">
-            <div class="control-block">
-              <label for="metric">Metrica</label
-              ><select id="metric" disabled></select>
-            </div>
-            <div class="control-block">
-              <label for="normalization">Normalizzazione</label
-              ><select id="normalization">
-                <option value="none">Nessuna · valori originali</option>
-                <option value="zscore">z-score</option>
-                <option value="zmad">z-MAD</option>
-                <option value="percent">Variazione percentuale</option>
-              </select>
-            </div>
-            <div class="control-block">
-              <label for="from">Analisi da [s]</label
-              ><input
-                id="from"
-                type="number"
-                min="0"
-                step="any"
-                placeholder="Inizio"
-              />
-            </div>
-            <div class="control-block">
-              <label for="to">Analisi a [s]</label
-              ><input
-                id="to"
-                type="number"
-                min="0"
-                step="any"
-                placeholder="Fine"
-              />
-            </div>
+        <div id="workspace" hidden>
+          <div class="workspace-nav">
+            <nav class="tab-bar" aria-label="Modalità di analisi">
+              <button
+                  type="button"
+                  id="seriesTab"
+                  class="app-tab is-active"
+                  aria-pressed="true"
+                  aria-controls="modeNavigation"
+                >
+                Serie temporali</button><button
+                type="button"
+                id="summaryTab"
+                class="app-tab"
+                aria-pressed="false"
+                aria-controls="modeNavigation"
+                >
+                Riepilogo temporale
+              </button>
+            </nav>
+            <nav id="modeNavigation" class="subtabs" aria-labelledby="seriesTab">
+              <button
+                  type="button"
+                  id="viewTab"
+                  class="is-active"
+                  aria-pressed="true"
+                  aria-controls="visualPanel"
+                >
+                Visualizzatore</button>
+              <button type="button" id="statsTab" aria-pressed="false" aria-controls="statsPanel">
+                Analisi statistiche
+              </button>
+            </nav>
           </div>
-          <details class="disclosure advanced-settings">
-            <summary>Baseline e opzioni di normalizzazione</summary>
-<div class="disclosure__body">
+          <section class="card settings" aria-label="Impostazioni analisi">
             <div class="settings-primary">
               <div class="control-block">
-                <label for="baseline">Epoca baseline</label
-                ><input
-                  id="baselineSearch"
+                <label for="metric">Metrica</label><select id="metric" disabled></select>
+              </div>
+              <div id="seriesModeControls">
+                <div class="control-block">
+                  <label for="epoch">Stimolo / epoca</label><select id="epoch" disabled></select>
+                </div>
+              </div>
+              <div class="normalization-controls">
+                <div class="control-block">
+                  <label for="normalization">Normalizzazione</label><select id="normalization">
+                    <option value="none">Nessuna · valori originali</option>
+                    <option value="zscore">z-score</option>
+                    <option value="zmad">z-MAD</option>
+                    <option value="percent">Variazione percentuale</option>
+                  </select>
+                </div>
+                <div class="control-block" id="baselineEpochControl" hidden>
+                  <label for="baseline">Epoca baseline</label><select id="baseline" disabled></select>
+                </div>
+              </div>
+            </div>
+            <div id="summaryModeControls" hidden>
+              <div class="control-block">
+                <label for="aggregation">Aggregazione nel tempo</label><select id="aggregation">
+                  <option value="mean">Media dei campioni</option>
+                  <option value="median">Mediana dei campioni</option>
+                  <option value="weighted">Media pesata per durata</option>
+                  <option value="sd">Deviazione standard</option>
+                  <option value="min">Minimo</option>
+                  <option value="max">Massimo</option>
+                </select>
+              </div>
+              <fieldset class="epoch-selection">
+                <legend>Epoche da confrontare</legend>
+                <input
+                  id="summaryEpochSearch"
                   type="search"
-                  aria-label="Cerca epoca baseline"
-                  placeholder="Cerca baseline…"
-                /><select id="baseline" disabled></select>
-              </div>
-              <div class="control-block">
-                <label for="baseFrom">Baseline da [s]</label
-                ><input
-                  id="baseFrom"
-                  type="number"
-                  min="0"
-                  step="any"
-                  placeholder="Inizio"
-                />
-              </div>
-              <div class="control-block">
-                <label for="baseTo">Baseline a [s]</label
-                ><input
-                  id="baseTo"
-                  type="number"
-                  min="0"
-                  step="any"
-                  placeholder="Fine"
-                />
-              </div>
-              <div class="control-block">
-                <label for="madScale">Scala MAD</label
-                ><select id="madScale">
-                  <option value="scaled">MAD × 1,4826</option>
-                  <option value="raw">MAD grezza</option>
-                </select>
-              </div>
+                  aria-label="Cerca epoche da confrontare"
+                  placeholder="Cerca epoche…"
+                  />
+                <div class="selection-actions">
+                  <button id="epochsAll" type="button">Seleziona tutte</button><button id="epochsNone" type="button">
+                    Deseleziona tutte
+                  </button>
+                </div>
+                <div id="epochChecks"></div>
+                <p id="epochSelectionCount" class="panel-note"></p>
+                <p class="panel-note">
+                  La ricerca filtra l’elenco senza modificare la selezione. I
+                  pulsanti agiscono su tutte le epoche.
+                </p>
+              </fieldset>
             </div>
-            <p class="panel-note">
-              Baseline per soggetto e metrica. Gli intervalli sono relativi
-              all’inizio di ciascuna epoca.
-            </p>
-          </div>
-</details>
-        </section>
-        <nav class="tab-bar" aria-label="Modalità di analisi">
-          <button
-            type="button"
-            id="seriesTab"
-            class="app-tab is-active"
-            aria-pressed="true"
-          >
-            Time series</button
-          ><button
-            type="button"
-            id="summaryTab"
-            class="app-tab"
-            aria-pressed="false"
-          >
-            Riepilogo temporale
-          </button>
-        </nav>
-        <section
-          class="card mode-controls"
-          aria-label="Impostazioni della modalità"
-        >
-          <div id="seriesModeControls">
-            <div class="control-block">
-              <label for="epoch">Stimolo / epoca</label
-              ><input
-                id="epochSearch"
-                type="search"
-                aria-label="Cerca epoca da visualizzare"
-                placeholder="Cerca epoca…"
-              /><select id="epoch" disabled></select>
-            </div>
-          </div>
-          <div id="summaryModeControls" hidden>
-            <div class="control-block">
-              <label for="aggregation">Aggregazione nel tempo</label
-              ><select id="aggregation">
-                <option value="mean">Media dei campioni</option>
-                <option value="median">Mediana dei campioni</option>
-                <option value="weighted">Media pesata per durata</option>
-                <option value="sd">Deviazione standard</option>
-                <option value="min">Minimo</option>
-                <option value="max">Massimo</option>
-              </select>
-            </div>
-            <div class="options-grid">
-              <div class="control-block">
-                <label for="summaryYScale">Scala verticale</label
-                ><select id="summaryYScale">
-                  <option value="auto">Auto</option>
-                  <option value="custom">Intervallo personalizzato</option>
-                </select>
+            <details class="disclosure advanced-settings">
+              <summary>Parametri temporali</summary>
+              <div class="disclosure__body">
+                <h3>Intervallo di analisi</h3>
+                <div class="settings-primary">
+                  <div class="control-block">
+                    <label for="from">Analisi da [s]</label><input
+                    id="from"
+                    type="number"
+                    min="0"
+                    step="any"
+                    placeholder="Inizio"
+                    />
+                  </div>
+                  <div class="control-block">
+                    <label for="to">Analisi a [s]</label><input
+                    id="to"
+                    type="number"
+                    min="0"
+                    step="any"
+                    placeholder="Fine"
+                    />
+                  </div>
+                </div>
+                <div id="baselineSettings" hidden>
+                  <h3>Baseline e normalizzazione</h3>
+                  <div class="settings-primary">
+                    <div class="control-block">
+                      <label for="baseFrom">Baseline da [s]</label><input
+                      id="baseFrom"
+                      type="number"
+                      min="0"
+                      step="any"
+                      placeholder="Inizio"
+                      />
+                    </div>
+                    <div class="control-block">
+                      <label for="baseTo">Baseline a [s]</label><input
+                      id="baseTo"
+                      type="number"
+                      min="0"
+                      step="any"
+                      placeholder="Fine"
+                      />
+                    </div>
+                    <div class="control-block">
+                      <label for="madScale">Scala MAD</label><select id="madScale">
+                        <option value="scaled">MAD × 1,4826</option>
+                        <option value="raw">MAD grezza</option>
+                      </select>
+                    </div>
+                  </div>
+                  <p class="panel-note">
+                    Baseline per soggetto e metrica. Gli intervalli sono relativi
+                    all’inizio di ciascuna epoca.
+                  </p>
+                </div>
+                <div id="seriesOptions">
+                  <h3>Allineamento temporale</h3>
+                  <div class="settings-primary">
+                    <div class="control-block">
+                      <label for="range">Estensione temporale</label><select id="range">
+                        <option value="intersection">Intervallo comune</option>
+                        <option value="union">Intervallo completo</option>
+                      </select>
+                    </div>
+                    <div class="control-block">
+                      <label for="step">Passo griglia [s]</label><input
+                      id="step"
+                      type="number"
+                      min="0.000001"
+                      step="any"
+                      placeholder="Auto · serie più lenta"
+                      />
+                    </div>
+                    <div class="control-block">
+                      <label for="interpolation">Interpolazione</label><select id="interpolation">
+                        <option value="linear">Lineare</option>
+                        <option value="nearest">Più vicino</option>
+                      </select>
+                    </div>
+                    <div class="control-block">
+                      <label for="gap">Lacuna massima [s]</label><input
+                      id="gap"
+                      type="number"
+                      min="0.000001"
+                      step="any"
+                      placeholder="Auto · 3 × passo nativo"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div class="control-block">
-                <label for="summaryYMin">Minimo Y</label
-                ><input
-                  id="summaryYMin"
-                  aria-describedby="summaryYError"
-                  type="number"
-                  step="any"
-                  value="0"
-                  disabled
-                />
-              </div>
-              <div class="control-block">
-                <label for="summaryYMax">Massimo Y</label
-                ><input
-                  id="summaryYMax"
-                  aria-describedby="summaryYError"
-                  type="number"
-                  step="any"
-                  value="1"
-                  disabled
-                />
-              </div>
-            </div>
-            <p id="summaryYError" role="status" class="panel-note"></p>
-            <fieldset class="epoch-selection">
-              <legend>Epoche da confrontare</legend>
-              <input
-                id="summaryEpochSearch"
-                type="search"
-                aria-label="Cerca epoche da confrontare"
-                placeholder="Cerca epoche…"
-              />
-              <div class="selection-actions">
-                <button id="epochsAll" type="button">Seleziona tutte</button
-                ><button id="epochsNone" type="button">
-                  Deseleziona tutte
+            </details>
+          </section>
+          <p id="analysisError" class="danger" role="alert"></p>
+          <div class="metrics-layout">
+            <section
+                class="card main-panel"
+                id="visualPanel"
+                aria-labelledby="chartTitle"
+              >
+              <div class="panel-heading panel-heading-inline">
+                <div>
+                  <h2 class="section-title" id="chartTitle">
+                    Metriche nel tempo
+                  </h2>
+                </div>
+                <button type="button" id="export" disabled>
+                  Esporta risultati CSV
                 </button>
               </div>
-              <div id="epochChecks"></div>
-              <p id="epochSelectionCount" class="panel-note"></p>
-              <p class="panel-note">
-                La ricerca filtra l’elenco senza modificare la selezione. I
-                pulsanti agiscono su tutte le epoche.
-              </p>
-            </fieldset>
-          </div>
-        </section>
-        <nav class="subtabs" aria-label="Sezione della modalità">
-          <button
-            type="button"
-            id="viewTab"
-            class="is-active"
-            aria-pressed="true"
-          >
-            Visualizzazione</button
-          ><button type="button" id="statsTab" aria-pressed="false">
-            Analisi statistiche
-          </button>
-        </nav>
-        <section id="videoCard" class="card stimulus-video-card" aria-labelledby="videoTitle">
-          <details class="disclosure" open>
-            <summary id="videoTitle">Video sincronizzato · <span id="videoEpoch"></span></summary>
-<div class="disclosure__body">
-            <div class="stimulus-video-layout">
-              <div>
-                <video id="stimulusVideo" controls playsinline preload="metadata" hidden aria-label="Video dello stimolo"></video>
-                <p id="videoEmpty" class="panel-note">Associa un video all’epoca selezionata.</p>
-                <p class="panel-note">Tempo: <output id="videoTime">0.00 s</output>. Clicca sui grafici temporali per spostare il video.</p>
-                <p id="videoError" role="status" class="panel-note"></p>
+              <div class="chart-controls">
+                <fieldset class="display-control">
+                  <legend class="visually-hidden">Mostra</legend>
+                  <div class="display-options">
+                    <label class="check-option"
+                      ><input id="individuals" type="checkbox" checked />
+                      Soggetti</label><label class="check-option"
+                      ><input id="average" type="checkbox" checked /> Media ±
+                      IC 95%</label>
+                  </div>
+                </fieldset>
+                <div id="momentsPanel" class="chart-extrema" hidden>
+                  <label for="momentsCriterion">Estremi della media</label>
+                  <select id="momentsCriterion">
+                    <option value="peaks">Massimi</option>
+                    <option value="troughs">Minimi</option>
+                  </select>
+                  <input id="momentsCount" type="number" min="1" max="50" step="1" value="1" aria-label="Numero di estremi" title="Numero di estremi" />
+                  <button id="extractMoments" type="button" disabled>Trova</button>
+                  <p id="momentsStatus" class="panel-note" role="status"></p>
+                </div>
               </div>
-              <details class="disclosure">
-                <summary>Associa video alle epoche</summary>
-<div class="disclosure__body">
-                <p class="panel-note">Lo zero del video corrisponde all’inizio dell’epoca. I file rimangono nel browser e vanno riassociati dopo il ricaricamento.</p>
-                <div id="videoAssignments"></div>
-              </div>
-</details>
-            </div>
-          </div>
-</details>
-        </section>
-        <div class="metrics-layout">
-          <section
-            class="card main-panel"
-            id="visualPanel"
-            aria-labelledby="chartTitle"
-          >
-            <div class="panel-heading panel-heading-inline">
-              <div>
-                <div class="step-label"><span>02</span> ESPLORA</div>
-                <h2 class="section-title" id="chartTitle">
-                  Metriche nel tempo
-                </h2>
-              </div>
-              <button type="button" id="export" disabled>
-                Esporta risultati CSV
-              </button>
-            </div>
-            <fieldset class="display-control">
-              <legend>Mostra</legend>
-              <div class="display-options">
-                <label class="check-option"
-                  ><input id="individuals" type="checkbox" checked />
-                  Soggetti</label
-                ><label class="check-option"
-                  ><input id="average" type="checkbox" checked /> Media ±
-                  DS</label
+              <div
+                  id="chart"
+                  tabindex="0"
+                  class="metrics-chart"
+                  aria-label="Grafico metriche"
                 >
+                <p class="empty-state">
+                  Carica un dataset oppure prova l’esempio.
+                </p>
               </div>
-            </fieldset>
-            <details id="seriesOptions" class="disclosure advanced-settings">
-              <summary>Allineamento temporale</summary>
-<div class="disclosure__body">
+              <div id="tooltip" class="chart-tooltip" hidden></div>
+              <section id="momentsMedia" hidden aria-label="Frame e clip estratti">
+                <div id="momentsIntervals"></div>
+                <p id="momentsMediaStatus" role="status"></p>
+                <button id="momentsCancel" type="button" hidden>Annulla estrazione</button>
+              </section>
+            </section>
+            <section
+                class="card stats-panel"
+                id="statsPanel"
+                hidden
+                aria-label="Analisi statistiche"
+              >
+              <h2 id="statsTitle">Analisi statistiche · Time series</h2>
               <div class="options-grid">
                 <div class="control-block">
-                  <label for="range">Estensione temporale</label
-                  ><select id="range">
-                    <option value="intersection">Intervallo comune</option>
-                    <option value="union">Intervallo completo</option>
+                  <label for="design">Disegno</label><select id="design">
+                    <option value="within" hidden disabled>
+                      Entro soggetto · confronto tra epoche
+                    </option>
+                    <option value="one" selected>
+                      Un campione · confronto con valore nullo
+                    </option>
+                    <option value="multi">
+                      Gruppi indipendenti · test omnibus
+                    </option>
                   </select>
                 </div>
                 <div class="control-block">
-                  <label for="step">Passo griglia [s]</label
-                  ><input
-                    id="step"
-                    type="number"
-                    min="0.000001"
-                    step="any"
-                    placeholder="Auto · serie più lenta"
-                  />
+                  <label for="nullValue">Valore nullo</label><input id="nullValue" type="number" value="0" step="any" />
                 </div>
                 <div class="control-block">
-                  <label for="interpolation">Interpolazione</label
-                  ><select id="interpolation">
-                    <option value="linear">Lineare</option>
-                    <option value="nearest">Più vicino</option>
-                  </select>
-                </div>
-                <div class="control-block">
-                  <label for="gap">Lacuna massima [s]</label
-                  ><input
-                    id="gap"
-                    type="number"
-                    min="0.000001"
-                    step="any"
-                    placeholder="Auto · 3 × passo nativo"
-                  />
-                </div>
-              </div>
-            </div>
-</details>
-            <div id="summaryOptions" hidden>
-              <p class="panel-note">
-                Soggetti: beeswarm · Media ± DS: barre con deviazione standard.
-                Clicca un punto o ◎ per evidenziare un soggetto.
-              </p>
-            </div>
-            <div
-              id="chart"
-              tabindex="0"
-              class="metrics-chart"
-              aria-label="Grafico metriche"
-            >
-              <p class="empty-state">
-                Carica un dataset oppure prova l’esempio.
-              </p>
-            </div>
-            <div id="tooltip" class="chart-tooltip" hidden></div>
-            <p id="chartNote" class="panel-note"></p>
-            <details class="disclosure result-details">
-              <summary>Valori aggregati e riepilogo</summary>
-<div class="disclosure__body">
-              <div id="results" class="results-table"></div>
-            </div>
-</details>
-            <details class="disclosure result-details">
-              <summary>Valori individuali e outlier</summary>
-<div class="disclosure__body">
-              <div id="outlierResults" class="results-table"></div>
-            </div>
-</details>
-          </section>
-          <section
-            class="card stats-panel"
-            id="statsPanel"
-            hidden
-            aria-label="Analisi statistiche"
-          >
-            <div class="step-label"><span>02</span> ANALISI</div>
-            <h2 id="statsTitle">Analisi statistiche · Time series</h2>
-            <div class="options-grid">
-              <div class="control-block">
-                <label for="design">Disegno</label
-                ><select id="design">
-                  <option value="within" hidden disabled>
-                    Entro soggetto · confronto tra epoche
-                  </option>
-                  <option value="one" selected>
-                    Un campione · confronto con valore nullo
-                  </option>
-                  <option value="multi">
-                    Gruppi indipendenti · test omnibus
-                  </option>
-                </select>
-              </div>
-              <div class="control-block">
-                <label for="nullValue">Valore nullo</label
-                ><input id="nullValue" type="number" value="0" step="any" />
-              </div>
-              <div class="control-block">
-                <label for="permutations">Permutazioni</label
-                ><input
+                  <label for="permutations">Permutazioni</label><input
                   id="permutations"
                   type="number"
                   min="100"
                   max="50000"
                   step="100"
                   value="5000"
-                />
-              </div>
-              <div class="control-block">
-                <label for="seed">Seed casuale</label
-                ><input
+                  />
+                </div>
+                <div class="control-block">
+                  <label for="seed">Seed casuale</label><input
                   id="seed"
                   type="number"
                   min="0"
                   max="4294967295"
                   step="1"
                   value="12345"
-                />
+                  />
+                </div>
               </div>
-            </div>
-            <div id="groupEditor" hidden>
-              <div class="selection-actions">
-                <button type="button" id="addGroup">＋ Aggiungi gruppo</button>
+              <div id="groupEditor" hidden>
+                <div class="selection-actions">
+                  <button type="button" id="addGroup">＋ Aggiungi gruppo</button>
+                </div>
+                <div id="groupNames"></div>
+                <div id="assignments"></div>
               </div>
-              <div id="groupNames"></div>
-              <div id="assignments"></div>
-            </div>
-            <p id="statsTarget" class="metric-kpi">
-              Seleziona i dati nella visualizzazione.
-            </p>
-            <details class="disclosure advanced-settings">
-              <summary>Metodo statistico e correzione</summary>
-<div class="disclosure__body">
-              <p id="statsMethod" class="panel-note"></p>
-            </div>
-</details>
-            <div class="selection-actions">
-              <button type="button" id="runStats" disabled>
-                Esegui analisi</button
-              ><button type="button" id="cancelStats" disabled>Annulla</button
-              ><button type="button" id="exportStats" disabled>
-                Esporta analisi CSV
-              </button>
-            </div>
-            <p
-              id="statsStatus"
-              role="status"
-              aria-live="polite"
-              class="panel-note"
-            >
-              Carica un dataset.
-            </p>
-            <div
-              id="statsGroupPlot"
-              tabindex="0"
-              aria-label="Medie e intervalli di confidenza"
-              class="metrics-chart"
-            ></div>
-            <div
-              id="statsPPlot"
-              tabindex="0"
-              aria-label="P-value dei confronti"
-              class="metrics-chart"
-            ></div>
-            <label class="check-option"
-              ><input id="significantOnly" type="checkbox" checked /> Mostra solo
-              risultati con p finale ≤ 0,05</label
-            >
-            <section id="significantMedia" hidden aria-labelledby="significantMediaTitle">
-              <h3 id="significantMediaTitle">Momenti significativi nel video</h3>
-              <p class="panel-note">Istanti consecutivi con p finale ≤ 0,05, raggruppati senza attraversare lacune. Ogni frame corrisponde al p minimo dell’intervallo. Un istante isolato produce un frame; le clip vanno dal primo all’ultimo istante significativo.</p>
-              <p class="panel-note">Clip con audio originale, ricodificate in tempo reale (circa 30 fps): mantieni la scheda visibile. Gli intervalli descrivono i campioni significativi, non un test statistico sull’intera clip. Il CSV delle analisi include tutti i punti per tracciabilità.</p>
-              <div id="significantIntervals"></div>
-              <p id="mediaStatus" role="status" aria-live="polite" class="panel-note"></p>
-              <button id="cancelMedia" type="button" hidden>Annulla estrazione</button>
-            </section>
-            <div id="statsResults" class="results-table"></div>
-          </section>
-          <aside class="card sample-panel">
-            <div class="step-label"><span>03</span> CAMPIONE</div>
-            <h2>Soggetti</h2>
-            <p id="counts" class="panel-note">Nessun soggetto.</p>
-            <div class="selection-actions">
-              <button type="button" id="all">Seleziona tutti</button
-              ><button type="button" id="none">Deseleziona</button>
-            </div>
-            <div class="control-block">
-              <label for="outlierSeries">Outlier · time series</label
-              ><select id="outlierSeries">
-                <option value="iqr">1,5 × IQR (Tukey)</option>
-                <option value="mad">z robusto · MAD > 3,5</option>
-                <option value="mean-iqr">Media temporale · 1,5 × IQR</option>
-                <option value="none">Disattivato</option>
-              </select>
-            </div>
-            <div class="control-block" id="summaryOutlierControl" hidden>
-              <label for="outlierSummary">Outlier · riepilogo temporale</label
-              ><select id="outlierSummary">
-                <option value="iqr">1,5 × IQR sui riepiloghi</option>
-                <option value="mad">z robusto · MAD sui riepiloghi</option>
-                <option value="none">Disattivato</option>
-              </select>
-            </div>
-            <p id="outlierContext" class="panel-note"></p>
-            <div class="selection-actions">
-              <button
-                id="isolateOutliers"
-                type="button"
-                disabled
-                aria-pressed="false"
-              >
-                ◎ Isola outlier (0)</button
-              ><button id="restoreIsolation" type="button" hidden>
-                Ripristina vista
-              </button>
-            </div>
-            <p id="isolationStatus" class="panel-note" aria-live="polite"></p>
-            <div id="subjects"></div>
-            <details class="disclosure outlier-help">
-              <summary>Come funziona il flag</summary>
-<div class="disclosure__body">
-              <p id="outlierHelp"></p>
-              <p>
-                I flag sono informativi: nessuna esclusione automatica. La
-                selezione dei soggetti controlla sia i grafici sia i test. Le
-                soglie sono calcolate su tutti i soggetti caricati e
-                utilizzabili, anche se deselezionati.
+              <details class="disclosure stats-sample">
+                <summary>Campione statistico <span id="statsExcludedCount"></span></summary>
+                <div class="disclosure__body">
+                  <p class="panel-note">Spunta i soggetti da escludere dai test. Le esclusioni valgono per tutte le analisi del dataset aperto.</p>
+                  <div class="selection-actions">
+                    <button id="excludeFlagged" type="button" disabled>Escludi gli outlier segnalati</button>
+                    <button id="includeAllStats" type="button" disabled>Reincludi tutti</button>
+                  </div>
+                  <div id="statsSampleList" role="group" aria-label="Soggetti da escludere dai test"></div>
+                </div>
+              </details>
+              <p id="statsTarget" class="metric-kpi">
+                Seleziona i dati nella visualizzazione.
               </p>
+              <details class="disclosure advanced-settings">
+                <summary>Metodo statistico e correzione</summary>
+                <div class="disclosure__body">
+                  <p id="statsMethod" class="panel-note"></p>
+                </div>
+              </details>
+              <div class="selection-actions">
+                <button type="button" id="runStats" disabled>
+                  Esegui analisi</button><button type="button" id="cancelStats" disabled>Annulla</button><button type="button" id="exportStats" disabled>
+                  Esporta analisi CSV
+                </button>
+              </div>
+              <p
+                  id="statsStatus"
+                  role="status"
+                  aria-live="polite"
+                  class="panel-note"
+                >
+                Carica un dataset.
+              </p>
+              <div
+                  id="statsGroupPlot"
+                  tabindex="0"
+                  aria-label="Medie e intervalli di confidenza"
+                  class="metrics-chart"
+                ></div>
+              <div
+                  id="statsPPlot"
+                  tabindex="0"
+                  aria-label="P-value dei confronti"
+                  class="metrics-chart"
+                ></div>
+              <label class="check-option"
+                ><input id="significantOnly" type="checkbox" checked /> Mostra solo
+                risultati con p finale ≤ 0,05</label>
+              <section id="significantMedia" hidden aria-labelledby="significantMediaTitle">
+                <h3 id="significantMediaTitle">Momenti significativi nel video</h3>
+                <p class="panel-note">Istanti consecutivi con p finale ≤ 0,05, raggruppati senza attraversare lacune. Ogni frame corrisponde al p minimo dell’intervallo. Un istante isolato produce un frame; le clip vanno dal primo all’ultimo istante significativo.</p>
+                <p class="panel-note">Clip con audio originale, ricodificate in tempo reale (circa 30 fps): mantieni la scheda visibile. Gli intervalli descrivono i campioni significativi, non un test statistico sull’intera clip. Il CSV delle analisi include tutti i punti per tracciabilità.</p>
+                <div id="significantIntervals"></div>
+                <p id="mediaStatus" role="status" aria-live="polite" class="panel-note"></p>
+                <button id="cancelMedia" type="button" hidden>Annulla estrazione</button>
+              </section>
+              <div id="statsResults" class="results-table"></div>
+            </section>
+            <div class="workspace-sidebar">
+              <section id="videoCard" class="card stimulus-video-card" aria-labelledby="videoTitle">
+                <details class="disclosure" open>
+                  <summary id="videoTitle">Video sincronizzato</summary>
+                  <div class="disclosure__body">
+                    <p id="videoEpoch" class="video-epoch"></p>
+                    <video id="stimulusVideo" controls playsinline preload="metadata" hidden aria-label="Video dello stimolo"></video>
+                    <p id="videoEmpty" class="panel-note">Associa un video all’epoca selezionata.</p>
+                    <p class="panel-note">Tempo: <output id="videoTime">0.00 s</output>. Trascina il cursore sull’asse dei tempi per spostare il video.</p>
+                    <p id="videoError" role="status" class="panel-note"></p>
+                    <div class="video-assignment-action">
+                      <button id="openVideoAssignments" type="button" aria-haspopup="dialog" aria-controls="videoAssignmentDialog">
+                        Associa video alle epoche
+                      </button>
+                    </div>
+                  </div>
+                </details>
+              </section>
+              <aside class="card sample-panel">
+                <h2>Soggetti</h2>
+                <p id="counts" class="panel-note">Nessun soggetto.</p>
+                <div class="selection-actions">
+                  <button type="button" id="all">Seleziona tutti</button><button type="button" id="none">Deseleziona</button>
+                </div>
+                <div class="control-block">
+                  <label for="outlierSeries">Outlier · time series</label><select id="outlierSeries">
+                    <option value="iqr">1,5 × IQR (Tukey)</option>
+                    <option value="mad">z robusto · MAD > 3,5</option>
+                    <option value="mean-iqr">Media temporale · 1,5 × IQR</option>
+                    <option value="none">Disattivato</option>
+                  </select>
+                </div>
+                <div class="control-block" id="summaryOutlierControl" hidden>
+                  <label for="outlierSummary">Outlier · riepilogo temporale</label><select id="outlierSummary">
+                    <option value="iqr">1,5 × IQR sui riepiloghi</option>
+                    <option value="mad">z robusto · MAD sui riepiloghi</option>
+                    <option value="none">Disattivato</option>
+                  </select>
+                </div>
+                <p id="outlierContext" class="panel-note"></p>
+                <div class="selection-actions">
+                  <button
+                      id="isolateOutliers"
+                      type="button"
+                      disabled
+                      aria-pressed="false"
+                    >
+                    ◎ Isola outlier (0)</button><button id="restoreIsolation" type="button" hidden>
+                    Ripristina vista
+                  </button>
+                  <button id="excludeVisibleOutliers" type="button" hidden disabled>Escludi dai test</button>
+                </div>
+                <p id="isolationStatus" class="panel-note" aria-live="polite"></p>
+                <input id="subjectSearch" type="search" placeholder="Cerca soggetto…" aria-label="Cerca soggetto" aria-controls="subjectList" autocomplete="off" />
+                <div class="subject-list" id="subjectList" tabindex="0" role="region" aria-label="Lista soggetti">
+                  <div id="subjects"></div>
+                  <p id="subjectSearchEmpty" class="panel-note" role="status" hidden>Nessun soggetto trovato.</p>
+                  <div id="warnings" class="warnings" aria-live="polite"></div>
+                </div>
+              </aside>
             </div>
-</details>
-            <div id="warnings" class="warnings" aria-live="polite"></div>
-          </aside>
+          </div>
         </div>
         <details class="disclosure card methods">
           <summary>Come vengono elaborati i dati</summary>
-<div class="disclosure__body">
-          <p>
-            La normalizzazione usa esclusivamente la baseline dello stesso
-            soggetto e della stessa metrica: z-score con deviazione standard
-            campionaria (N−1), z-MAD con mediana e deviazione assoluta mediana,
-            variazione percentuale 100 × (x − media baseline) / media baseline.
-            I valori null sono esclusi dalle statistiche; una baseline assente o
-            con denominatore nullo esclude la serie e produce un avviso.
-          </p>
-          <p>
-            Le serie sono allineate su una griglia ancorata a zero, senza
-            spostare il primo campione. Il passo automatico è il maggiore dei
-            passi mediani nativi. Per ridurre la frequenza viene applicata una
-            media mobile temporale (filtro boxcar di larghezza pari al passo di
-            destinazione) prima del campionamento. È un filtro semplice con
-            attenuazione limitata, non un filtro ideale. Alle estremità la
-            finestra è troncata. Nessuna estrapolazione; nessun collegamento
-            attraverso valori null o lacune oltre la soglia.
-          </p>
-          <p>
-            I riepiloghi temporali usano i campioni originali normalizzati,
-            senza ricampionamento. La media pesata integra segmenti lineari
-            validi, escludendo lacune; usa la stessa soglia lacune impostata
-            nella scheda Time series. La media di gruppo assegna lo stesso peso
-            a ciascun soggetto. Nelle time series la banda descrittiva indica ±1
-            DS tra soggetti (N−1). Nel riepilogo descrittivo i punti
-            rappresentano i soggetti e le barre la media ± DS. Nei grafici delle
-            analisi statistiche le barre mostrano media e IC 95% t di Student,
-            non corretti per confronti multipli. Il numero di soggetti
-            disponibili è riportato per ogni istante o epoca.
-          </p>
-          <p>
-            <a href="matlab/exportMetricsJSON.m" download
-              >Scarica l’esportatore MATLAB</a
-            >
-            · <a href="README.md">Formato e istruzioni</a>
-          </p>
-        </div>
-</details>
+          <div class="disclosure__body">
+            <p>
+              La normalizzazione usa esclusivamente la baseline dello stesso
+              soggetto e della stessa metrica: z-score con deviazione standard
+              campionaria (N−1), z-MAD con mediana e deviazione assoluta mediana,
+              variazione percentuale 100 × (x − media baseline) / media baseline.
+              I valori null sono esclusi dalle statistiche; una baseline assente o
+              con denominatore nullo esclude la serie e produce un avviso.
+            </p>
+            <p>
+              Le serie sono allineate su una griglia ancorata a zero, senza
+              spostare il primo campione. Il passo automatico è il maggiore dei
+              passi mediani nativi. Per ridurre la frequenza viene applicata una
+              media mobile temporale (filtro boxcar di larghezza pari al passo di
+              destinazione) prima del campionamento. È un filtro semplice con
+              attenuazione limitata, non un filtro ideale. Alle estremità la
+              finestra è troncata. Nessuna estrapolazione; nessun collegamento
+              attraverso valori null o lacune oltre la soglia.
+            </p>
+            <p>
+              I riepiloghi temporali usano i campioni originali normalizzati,
+              senza ricampionamento. La media pesata integra segmenti lineari
+              validi, escludendo lacune; usa la stessa soglia lacune impostata
+              nella scheda Time series. La media di gruppo assegna lo stesso peso
+              a ciascun soggetto. La banda delle serie temporali e le barre del riepilogo mostrano la media tra soggetti con IC 95% t di Student. Gli intervalli sono puntuali e richiedono almeno due soggetti. Nel riepilogo i punti rappresentano i singoli soggetti. Il numero di soggetti
+              disponibili è riportato per ogni istante o epoca.
+            </p>
+            <p>
+              <a href="matlab/exportMetricsJSON.m" download
+                >Scarica l’esportatore MATLAB</a
+              >
+              · <a href="README.md">Formato e istruzioni</a>
+            </p>
+          </div>
+        </details>
       </main>
       <footer>
         Behavior &amp; Brain Lab · Metrics Viewer · elaborazione nel browser
       </footer>
     </div>
+    <dialog id="videoAssignmentDialog" aria-labelledby="videoAssignmentTitle">
+      <form method="dialog" class="video-assignment-dialog-header">
+        <h2 id="videoAssignmentTitle" class="section-title">Associa video alle epoche</h2>
+        <button autofocus>Chiudi</button>
+      </form>
+      <p class="panel-note">I video vanno riassociati dopo il ricaricamento.</p>
+      <div id="videoAssignments"></div>
+    </dialog>
     <dialog
-      id="busyDialog"
-      aria-labelledby="busyTitle"
-      aria-describedby="busyMessage busyDetail"
-    >
+        id="busyDialog"
+        aria-labelledby="busyTitle"
+        aria-describedby="busyMessage busyDetail"
+      >
       <div class="busy-content">
         <span class="busy-spinner" aria-hidden="true"></span>
         <h2 id="busyTitle">Operazione in corso</h2>
@@ -597,9 +534,9 @@
           Lettura metriche in corso…
         </p>
         <progress
-          id="busyProgress"
-          aria-label="Avanzamento operazione"
-        ></progress>
+            id="busyProgress"
+            aria-label="Avanzamento operazione"
+          ></progress>
         <p id="busyDetail" class="panel-note"></p>
         <button id="busyCancel" type="button" hidden>Annulla analisi</button>
       </div>
@@ -611,10 +548,13 @@
     <script src="js/analysis.js"></script>
     <script src="js/repeated.js"></script>
     <script src="js/isolation.js"></script>
+    <script src="js/floating-media.js"></script>
     <script src="js/significant-media.js"></script>
     <script src="js/statistics-ui.js"></script>
     <script src="js/video.js"></script>
     <script src="js/demo-data.js"></script>
+    <script src="js/moments.js"></script>
+    <script src="js/chart.js"></script>
     <script src="js/app.js"></script>
     <script src="js/searchable-select.js"></script>
   </body>

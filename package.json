@@ -3,5 +3,5 @@
   "version": "1.0.0",
   "private": true,
   "description": "Local-first MATLAB metrics viewer",
-  "scripts": {"test": "node --test tests/core.test.js tests/analysis.test.js tests/repeated.test.js tests/statistics-ui.test.js tests/video.test.js tests/significant-media.test.js tests/demo.test.js", "start": "node server.cjs"}
+  "scripts": {"test": "node --test tests/core.test.js tests/analysis.test.js tests/repeated.test.js tests/statistics-ui.test.js tests/video.test.js tests/significant-media.test.js tests/demo.test.js tests/moments.test.js tests/floating-media.test.js", "start": "node server.cjs"}
 }

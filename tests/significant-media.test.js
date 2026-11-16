@@ -32,7 +32,7 @@ test('chart navigation selects the matching clip and seeks before or after metad
   const get=id=>{if(!nodes.has(id))nodes.set(id,new Element('div'));return nodes.get(id);};
   const env={document:{getElementById:get,createElement:tag=>new Element(tag),createTextNode:text=>({textContent:text}),addEventListener(){}},MetricsVideo:{source:()=>({url:'demo.mp4'}),pause(){}},requestAnimationFrame:fn=>{frames.set(++nextFrame,fn);return nextFrame;},cancelAnimationFrame:id=>frames.delete(id),performance:{now:()=>0}};
   vm.runInNewContext(fs.readFileSync(require.resolve('../js/significant-media'),'utf8'),env);
-  const api=env.MetricsSignificantMedia;
+  const api=env.MetricsSignificantMedia.createViewer();
   api.show([{time:1,pAdjusted:.01},{time:2,pAdjusted:.02},{time:3,pAdjusted:.5},{time:4,pAdjusted:.01}],{view:'series',epoch:'A',grid_step:1});
   const rows=get('significantIntervals').children,video=rows[0].children[1].children[0];
   api.focusTime(2);assert.equal(rows[0].focused,true);assert.equal(rows[0].classes.has('is-selected'),true);
@@ -48,6 +48,26 @@ test('chart navigation selects the matching clip and seeks before or after metad
   api.focusTime(4);assert.equal(rows[0].classes.has('is-selected'),false);assert.equal(rows[1].classes.has('is-selected'),true);
   api.focusTime(3);assert.equal(rows[1].classes.has('is-selected'),true);
   api.clear();api.focusTime(1);assert.equal(get('significantIntervals').children.length,0);
+  api.showRanges([{start:1,end:5,peak:2,label:'Primo picco'},{start:1,end:5,peak:4,label:'Secondo picco'}],{view:'series',epoch:'A',criterion:'peaks'});
+  const overlapping=get('significantIntervals').children;
+  api.focusTime(4,1);
+  assert.equal(overlapping[0].classes.has('is-selected'),false);
+  assert.equal(overlapping[1].classes.has('is-selected'),true);
+  const secondVideo=overlapping[1].children[1].children[0];secondVideo.readyState=1;secondVideo.events.loadedmetadata();
+  assert.equal(secondVideo.currentTime,4);
+  const opened=[];
+  env.MetricsFloatingMedia={create:()=>({has:()=>false,open:(...args)=>opened.push(args),clear(){}})};
+  const pip=env.MetricsSignificantMedia;
+  pip.show([{time:1,pAdjusted:.01},{time:2,pAdjusted:.02},{time:4,pAdjusted:.01}],{view:'series',epoch:'A',grid_step:1});
+  const anchor=new Element('rect');
+  pip.focusTime(2,null,anchor);pip.focusTime(4,null,anchor);
+  assert.equal(get('significantMedia').hidden,true);
+  assert.deepEqual(opened.map(args=>args[0]),[0,1]);
+  assert.equal(opened[0][1],anchor);
+  const floatingVideo=opened[0][2].children[1].children[0];
+  floatingVideo.events.loadedmetadata();assert.equal(floatingVideo.currentTime,2);
+
+
 });
 
 

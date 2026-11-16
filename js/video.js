@@ -3,13 +3,29 @@
   const $=id=>document.getElementById(id),video=$('stimulusVideo'),assignments=new Map(),plots=new Map();
   let epoch='',activeUrl=null,time=0,frame=null,series=true;
   const stop=()=>{if(frame!==null)cancelAnimationFrame(frame);frame=null;};
+  $('openVideoAssignments').addEventListener('click', () => $('videoAssignmentDialog').showModal());
   function paint(){
-    $('videoTime').textContent=`${time.toFixed(2)} s`;
+    const label = `${time.toFixed(2)} s`;
+    $('videoTime').textContent = label;
     for(const [svg,p]of plots){
       if(!svg.isConnected){plots.delete(svg);continue;}
-      const visible=series&&time>=p.min&&time<=p.max;
+      const atStart = activeUrl && p.showStart && time === 0 && p.min > 0;
+      const visible = series && (atStart || (time >= p.min && time <= p.max));
       p.line.setAttribute('visibility',visible?'visible':'hidden');
-      if(visible){const x=p.left+(time-p.min)/(p.max-p.min)*p.width;p.line.setAttribute('x1',x);p.line.setAttribute('x2',x);}
+      p.marker.setAttribute('visibility', visible ? 'visible' : 'hidden');
+      p.axis.setAttribute('aria-valuenow', Math.max(p.min, Math.min(p.max, time)));
+      p.axis.setAttribute('aria-valuetext', visible ? label : label + ', fuori dall’intervallo visibile');
+      if (visible) {
+        const x = p.left + (Math.max(p.min, time) - p.min) / (p.max - p.min) * p.width;
+        p.line.setAttribute('x1', x);
+        p.line.setAttribute('x2', x);
+        const width = Math.max(58, label.length * 8 + 16);
+        const center = Math.max(p.left + width / 2, Math.min(p.left + p.width - width / 2, x));
+        p.marker.setAttribute('transform', `translate(${center} ${p.axisY})`);
+        p.badge.setAttribute('x', -width / 2);
+        p.badge.setAttribute('width', width);
+        p.label.textContent = label;
+      }
     }
   }
   function seek(next){
@@ -71,19 +87,78 @@
     activate();for(const id of stale)release(id);
     rows(epochs);paint();
   }
-  function attach(svg,{min,max,left,top,width,height}){
-    const line=document.createElementNS('http://www.w3.org/2000/svg','line');
-    for(const [key,value]of Object.entries({y1:top,y2:top+height,stroke:'#bd253b','stroke-width':2,'pointer-events':'none','aria-hidden':'true'}))line.setAttribute(key,value);
-    svg.append(line);plots.set(svg,{min,max,left,width,line});
-    svg.addEventListener('click',event=>{
-      const matrix=svg.getScreenCTM();if(!matrix)return;
-      const point=svg.createSVGPoint();point.x=event.clientX;point.y=event.clientY;
-      const local=point.matrixTransform(matrix.inverse());
-      if(local.x<left||local.x>left+width||local.y<top||local.y>top+height)return;
-      seek(min+(local.x-left)/width*(max-min));
+  function attach(svg,{min,max,left,top,width,height,showStart=true}){
+    function element(tag, attributes) {
+      const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
+      return node;
+    }
+    const axisY = top + height + 29;
+    const line = element('line', { y1: top, y2: axisY + 6, class: 'video-playhead-line', 'aria-hidden': 'true' });
+    const axis = element('rect', {
+      x: left, y: axisY - 2, width, height: 26, rx: 4,
+      class: 'video-playhead-axis', tabindex: 0, role: 'slider',
+      'aria-label': 'Posizione del video in secondi', 'aria-valuemin': min, 'aria-valuemax': max
     });
-    svg.setAttribute('tabindex','0');svg.setAttribute('aria-label',`${svg.getAttribute('aria-label')||'Grafico'}. Clicca per cercare nel video; frecce destra e sinistra per spostarti di un secondo.`);
-    svg.addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();seek(Math.min(max,Math.max(min,time+(event.key==='ArrowRight'?1:-1))));}});
+    const marker = element('g', { class: 'video-playhead-marker', 'aria-hidden': 'true' });
+    const badge = element('rect', { height: 22, rx: 5 });
+    const label = element('text', { x: 0, y: 11, 'text-anchor': 'middle', 'dominant-baseline': 'central' });
+    marker.append(badge, label);
+    svg.append(line, axis, marker);
+    plots.set(svg, { min, max, left, width, axisY, line, axis, marker, badge, label, showStart });
+
+    function localPoint(event) {
+      const matrix = svg.getScreenCTM();
+      if (!matrix) return null;
+      const point = svg.createSVGPoint();
+      point.x = event.clientX;
+      point.y = event.clientY;
+      return point.matrixTransform(matrix.inverse());
+    }
+    function seekAt(x) {
+      seek(min + Math.max(0, Math.min(1, (x - left) / width)) * (max - min));
+    }
+    let pointerId = null;
+    axis.addEventListener('pointerdown', event => {
+      if (!event.isPrimary || event.button !== 0 || pointerId !== null) return;
+      const local = localPoint(event);
+      if (!local) return;
+      event.preventDefault();
+      axis.focus({ preventScroll: true });
+      pointerId = event.pointerId;
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', finish);
+      document.addEventListener('pointercancel', finish);
+      global.addEventListener('blur', stopDrag);
+      seekAt(local.x);
+    });
+    function move(event) {
+      if (pointerId !== event.pointerId) return;
+      if (!svg.isConnected) {
+        stopDrag();
+        return;
+      }
+      const local = localPoint(event);
+      if (local) seekAt(local.x);
+    }
+    function finish(event) {
+      if (pointerId !== event.pointerId) return;
+      if (event.type === 'pointerup') move(event);
+      stopDrag();
+    }
+    function stopDrag() {
+      pointerId = null;
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', finish);
+      document.removeEventListener('pointercancel', finish);
+      global.removeEventListener('blur', stopDrag);
+    }
+    axis.addEventListener('keydown', event => {
+      const next = { ArrowLeft: time - 1, ArrowRight: time + 1, Home: min, End: max }[event.key];
+      if (!Number.isFinite(next)) return;
+      event.preventDefault();
+      seek(Math.min(max, Math.max(min, next)));
+    });
     paint();
   }
   video.addEventListener('loadedmetadata',()=>seek(time));
