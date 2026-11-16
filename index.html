@@ -4,7 +4,6 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Behavior &amp; Brain Lab — Metrics Viewer</title>
-    <link rel="stylesheet" href="css/reference.css" />
     <link rel="stylesheet" href="css/metrics.css" />
   </head>
   <body>
@@ -51,7 +50,7 @@
                 type="file"
                 accept=".json,application/json"
                 multiple /></label
-            ><button type="button" id="demo">Prova un esempio</button
+            ><button type="button" id="demo">Prova file di esempio</button
             ><button type="button" id="clear">Svuota dataset</button>
           </div>
           <span class="drop-status" id="status" aria-live="polite"
@@ -95,8 +94,9 @@
               />
             </div>
           </div>
-          <details class="advanced-settings">
+          <details class="disclosure advanced-settings">
             <summary>Baseline e opzioni di normalizzazione</summary>
+<div class="disclosure__body">
             <div class="settings-primary">
               <div class="control-block">
                 <label for="baseline">Epoca baseline</label
@@ -139,7 +139,8 @@
               Baseline per soggetto e metrica. Gli intervalli sono relativi
               all’inizio di ciascuna epoca.
             </p>
-          </details>
+          </div>
+</details>
         </section>
         <nav class="tab-bar" aria-label="Modalità di analisi">
           <button
@@ -253,8 +254,9 @@
           </button>
         </nav>
         <section id="videoCard" class="card stimulus-video-card" aria-labelledby="videoTitle">
-          <details open>
+          <details class="disclosure" open>
             <summary id="videoTitle">Video sincronizzato · <span id="videoEpoch"></span></summary>
+<div class="disclosure__body">
             <div class="stimulus-video-layout">
               <div>
                 <video id="stimulusVideo" controls playsinline preload="metadata" hidden aria-label="Video dello stimolo"></video>
@@ -262,13 +264,16 @@
                 <p class="panel-note">Tempo: <output id="videoTime">0.00 s</output>. Clicca sui grafici temporali per spostare il video.</p>
                 <p id="videoError" role="status" class="panel-note"></p>
               </div>
-              <details>
+              <details class="disclosure">
                 <summary>Associa video alle epoche</summary>
+<div class="disclosure__body">
                 <p class="panel-note">Lo zero del video corrisponde all’inizio dell’epoca. I file rimangono nel browser e vanno riassociati dopo il ricaricamento.</p>
                 <div id="videoAssignments"></div>
-              </details>
+              </div>
+</details>
             </div>
-          </details>
+          </div>
+</details>
         </section>
         <div class="metrics-layout">
           <section
@@ -299,8 +304,9 @@
                 >
               </div>
             </fieldset>
-            <details id="seriesOptions" class="advanced-settings">
+            <details id="seriesOptions" class="disclosure advanced-settings">
               <summary>Allineamento temporale</summary>
+<div class="disclosure__body">
               <div class="options-grid">
                 <div class="control-block">
                   <label for="range">Estensione temporale</label
@@ -337,7 +343,8 @@
                   />
                 </div>
               </div>
-            </details>
+            </div>
+</details>
             <div id="summaryOptions" hidden>
               <p class="panel-note">
                 Soggetti: beeswarm · Media ± DS: barre con deviazione standard.
@@ -356,14 +363,18 @@
             </div>
             <div id="tooltip" class="chart-tooltip" hidden></div>
             <p id="chartNote" class="panel-note"></p>
-            <details class="result-details">
+            <details class="disclosure result-details">
               <summary>Valori aggregati e riepilogo</summary>
+<div class="disclosure__body">
               <div id="results" class="results-table"></div>
-            </details>
-            <details class="result-details">
+            </div>
+</details>
+            <details class="disclosure result-details">
               <summary>Valori individuali e outlier</summary>
+<div class="disclosure__body">
               <div id="outlierResults" class="results-table"></div>
-            </details>
+            </div>
+</details>
           </section>
           <section
             class="card stats-panel"
@@ -425,10 +436,12 @@
             <p id="statsTarget" class="metric-kpi">
               Seleziona i dati nella visualizzazione.
             </p>
-            <details class="advanced-settings">
+            <details class="disclosure advanced-settings">
               <summary>Metodo statistico e correzione</summary>
+<div class="disclosure__body">
               <p id="statsMethod" class="panel-note"></p>
-            </details>
+            </div>
+</details>
             <div class="selection-actions">
               <button type="button" id="runStats" disabled>
                 Esegui analisi</button
@@ -511,8 +524,9 @@
             </div>
             <p id="isolationStatus" class="panel-note" aria-live="polite"></p>
             <div id="subjects"></div>
-            <details class="outlier-help">
+            <details class="disclosure outlier-help">
               <summary>Come funziona il flag</summary>
+<div class="disclosure__body">
               <p id="outlierHelp"></p>
               <p>
                 I flag sono informativi: nessuna esclusione automatica. La
@@ -520,12 +534,14 @@
                 soglie sono calcolate su tutti i soggetti caricati e
                 utilizzabili, anche se deselezionati.
               </p>
-            </details>
+            </div>
+</details>
             <div id="warnings" class="warnings" aria-live="polite"></div>
           </aside>
         </div>
-        <details class="card methods">
+        <details class="disclosure card methods">
           <summary>Come vengono elaborati i dati</summary>
+<div class="disclosure__body">
           <p>
             La normalizzazione usa esclusivamente la baseline dello stesso
             soggetto e della stessa metrica: z-score con deviazione standard
@@ -562,7 +578,8 @@
             >
             · <a href="README.md">Formato e istruzioni</a>
           </p>
-        </details>
+        </div>
+</details>
       </main>
       <footer>
         Behavior &amp; Brain Lab · Metrics Viewer · elaborazione nel browser
@@ -597,6 +614,7 @@
     <script src="js/significant-media.js"></script>
     <script src="js/statistics-ui.js"></script>
     <script src="js/video.js"></script>
+    <script src="js/demo-data.js"></script>
     <script src="js/app.js"></script>
     <script src="js/searchable-select.js"></script>
   </body>

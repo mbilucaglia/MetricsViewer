@@ -200,3 +200,8 @@ Dopo un’analisi Time series, **Momenti significativi nel video** raggruppa sol
 Associa prima il video dell’epoca, oppure aggiungilo dopo l’analisi. L’estrazione usa un lettore separato e non sposta quello principale. Le clip sono ricodificate localmente, con audio originale, a circa 30 fps in WebM o MP4 secondo il browser; la registrazione richiede la durata della clip e la scheda deve restare visibile. È possibile annullarla. Un intervallo non coperto dalla durata del video viene segnalato e non esportato. I file portano metrica, epoca e tempi nel nome. Nessun video viene caricato su un server.
 
 Ogni intervallo dispone di un mini player con audio originale, play/pausa, ricerca limitata al segmento e volume. Parte un solo mini player alla volta. Gli istanti isolati mostrano un fotogramma con riproduzione disabilitata.
+
+
+### Esempio con video già associati
+
+**Prova file di esempio** carica i dati di `metrics_demo_2_stimoli.json` (35 soggetti sintetici, 10 metriche, incluse AWI_60Hz e WL_60Hz) e collega automaticamente i video di arancia, Coca-Cola e della baseline nera di 10 secondi. Parte dalla metrica AWI e dall’epoca arancia, senza normalizzazione. Funziona anche da `file://`: `js/demo-data.js` contiene una copia del JSON, verificata dai test. Per rigenerarla dopo una modifica del JSON, aggiornare il bundle prima di pubblicare. I tre MP4 devono restare nella cartella accanto a `index.html`. Vedi [DEMO_VIDEO.md](DEMO_VIDEO.md) per provare le analisi e i mini player.

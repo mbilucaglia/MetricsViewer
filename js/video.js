@@ -31,7 +31,7 @@
     video.hidden=!next;$('videoEmpty').hidden=!!next;
     $('videoError').textContent='';$('videoEpoch').textContent=epoch||'Nessuna epoca selezionata';paint();
   }
-  function release(id){const old=assignments.get(id);assignments.delete(id);if(old)URL.revokeObjectURL(old.url);}
+  function release(id){const old=assignments.get(id);assignments.delete(id);if(old?.objectUrl)URL.revokeObjectURL(old.url);}
   function rows(epochs){
     $('videoAssignments').replaceChildren();
     for(const id of epochs){
@@ -41,17 +41,24 @@
       input.addEventListener('change',()=>{
         const file=input.files[0];if(!file)return;
         const url=URL.createObjectURL(file),old=assignments.get(id);
-        assignments.set(id,{url,name:file.name});activate();if(old)URL.revokeObjectURL(old.url);rows(epochs);document.dispatchEvent?.(new CustomEvent('metrics-video-changed'));
+        assignments.set(id,{url,name:file.name,objectUrl:true});activate();if(old?.objectUrl)URL.revokeObjectURL(old.url);rows(epochs);document.dispatchEvent?.(new CustomEvent('metrics-video-changed'));
       });
       label.append(input);row.append(label);
       const item=assignments.get(id);
       if(item){
         const name=document.createElement('span');name.textContent=item.name;row.append(name);
         const remove=document.createElement('button');remove.type='button';remove.textContent='Rimuovi';remove.setAttribute('aria-label',`Rimuovi video per ${id}`);
-        remove.addEventListener('click',()=>{const old=assignments.get(id);assignments.delete(id);activate();URL.revokeObjectURL(old.url);rows(epochs);document.dispatchEvent?.(new CustomEvent('metrics-video-changed'));});row.append(remove);
+        remove.addEventListener('click',()=>{const old=assignments.get(id);assignments.delete(id);activate();if(old.objectUrl)URL.revokeObjectURL(old.url);rows(epochs);document.dispatchEvent?.(new CustomEvent('metrics-video-changed'));});row.append(remove);
       }
       $('videoAssignments').append(row);
     }
+  }
+  function replaceAssignments(items){
+    stop();video.pause();video.removeAttribute('src');video.load();activeUrl=null;time=0;
+    for(const id of assignments.keys())release(id);
+    for(const item of items)assignments.set(item.epoch,{url:item.url,name:item.name,objectUrl:false});
+    activate();rows(items.map(item=>item.epoch));
+    document.dispatchEvent?.(new CustomEvent('metrics-video-changed'));
   }
   function setContext(epochs,current,mode){
     series=mode==='series';$('videoCard').hidden=!series;
@@ -86,5 +93,5 @@
   video.addEventListener('error',()=>{stop();if(activeUrl)$('videoError').textContent='Video non riproducibile. Scegli un formato supportato dal browser, ad esempio MP4 o WebM.';});
   global.addEventListener('pagehide',()=>{video.pause();stop();});
   global.addEventListener('beforeunload',()=>{stop();for(const id of assignments.keys())release(id);});
-  global.MetricsVideo={setContext,attach,seek,pause:()=>video.pause(),source:id=>assignments.get(id)||null};
+  global.MetricsVideo={setContext,replaceAssignments,attach,seek,pause:()=>video.pause(),source:id=>assignments.get(id)||null};
 })(window);

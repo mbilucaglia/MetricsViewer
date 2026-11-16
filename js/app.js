@@ -25,7 +25,7 @@
     epochCheckboxes();
     $('subjects').replaceChildren();
     for(const [i,r] of (dataset?.recordings||[]).entries()){
-      const row=node('div',undefined,'subject-row'),label=node('label');row.dataset.recordingId=r.id;label.style.display='contents';const check=node('input');check.type='checkbox';check.checked=selected.has(r.id);check.setAttribute('aria-label',`Seleziona ${r.subject}`);
+      const row=node('div',undefined,'subject-row'),label=node('label');row.dataset.recordingId=r.id;const check=node('input');check.type='checkbox';check.checked=selected.has(r.id);check.setAttribute('aria-label',`Seleziona ${r.subject}`);
       check.onchange=()=>{check.checked?selected.add(r.id):selected.delete(r.id);render();};
       const text=node('span',r.subject);text.style.color=palette[i%palette.length];label.append(check,text);const remove=node('button','×');remove.title=`Rimuovi ${r.subject}`;remove.setAttribute('aria-label',remove.title);remove.onclick=()=>{dataset.recordings=dataset.recordings.filter(x=>x.id!==r.id);selected.delete(r.id);if(!dataset.recordings.length)dataset=null;refresh();};row.append(label,remove);$('subjects').append(row);
     }
@@ -74,11 +74,11 @@
   const svgNS='http://www.w3.org/2000/svg';
   function svgEl(tag,attrs={},text){const e=document.createElementNS(svgNS,tag);for(const[k,v]of Object.entries(attrs))e.setAttribute(k,v);if(text!==undefined)e.textContent=text;return e;}
   const barPlots=new Map();
-  function plot(traces,{categories=null,xLabel='Tempo dall’inizio dell’epoca [s]',hover=null,target='chart',title=null,bars=false,comparisons=[]}={}){
+  function plot(traces,{categories=null,xLabel='Tempo dall’inizio dell’epoca [s]',hover=null,target='chart',title=null,bars=false,comparisons=[],significancePoints=[],significanceStep=null}={}){
     const chart=$(target);
     if(bars&&categories)barPlots.set(target,{traces,options:{categories,xLabel,hover,target,title,bars,comparisons}});
     const significant=comparisons.filter(c=>Number.isFinite(c.pAdjusted)&&c.pAdjusted<=.05);
-    const bracketSpace=significant.length?32+significant.length*24:0;
+    const bracketSpace=categories&&significant.length?32+significant.length*24:0;
     const w=900,h=410+bracketSpace,p={l:65,r:25,t:25+bracketSpace,b:70};
     let xmin=Infinity,xmax=-Infinity,ymin=Infinity,ymax=-Infinity;
     for(const tr of traces)for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i]))continue;const d=tr.band?.[i]||0;xmin=Math.min(xmin,tr.x[i]);xmax=Math.max(xmax,tr.x[i]);ymin=Math.min(ymin,tr.y[i]-d);ymax=Math.max(ymax,tr.y[i]+d);}
@@ -100,6 +100,34 @@
     for(const[x,label]of ticks){const t=svgEl('text',{x:X(x),y:h-p.b+24,'text-anchor':'middle'},label.length>22?label.slice(0,20)+'…':label);t.append(svgEl('title',{},label));svg.append(t);}
     svg.append(svgEl('text',{x:w/2,y:h-12,'text-anchor':'middle'},xLabel));
     const clipId=`${target}-plot-clip`;const defs=svgEl('defs'),clip=svgEl('clipPath',{id:clipId});clip.append(svgEl('rect',{x:p.l,y:p.t,width:w-p.l-p.r,height:h-p.t-p.b}));defs.append(clip);svg.append(defs);
+    if(!categories&&significancePoints.length){
+      const layer=svgEl('g',{class:'significance-bars','clip-path':`url(#${clipId})`});
+      for(const range of window.MetricsSignificantMedia.bands(significancePoints,significanceStep)){
+        const left=Math.max(p.l,X(range.left)),right=Math.min(w-p.r,X(range.right));
+        if(right<left)continue;
+        const label=`${fmt(range.start)}–${fmt(range.end)} s · ${range.count} istanti significativi · p minimo ${fmt(range.minP)}. Vai al frammento video.`;
+        const bar=svgEl('rect',{x:left,y:p.t,width:Math.max(1,right-left),height:h-p.t-p.b,class:'significance-bar',tabindex:0,role:'button','aria-label':label});
+        bar.append(svgEl('title',{},label));
+        const activate=event=>{
+          event.stopPropagation();
+          let time=range.peak;
+          const matrix=event.type==='click'?svg.getScreenCTM():null;
+          if(matrix){
+            const point=svg.createSVGPoint();point.x=event.clientX;point.y=event.clientY;
+            const x=point.matrixTransform(matrix.inverse()).x;
+            time=xmin+(x-p.l)/(w-p.l-p.r)*(xmax-xmin);
+            if(Number.isFinite(significanceStep)&&significanceStep>0)time=range.start+Math.round((time-range.start)/significanceStep)*significanceStep;
+            time=Math.max(range.start,Math.min(range.end,time));
+          }
+          window.MetricsSignificantMedia.focusTime(time);
+        };
+        bar.addEventListener('click',activate);
+        bar.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();activate(event);}});
+        layer.append(bar);
+      }
+      svg.append(layer);
+      chart.append(node('p','Fasce verdi: istanti consecutivi con p finale ≤ 0,05, estesi di mezzo passo temporale ai bordi. Clicca una fascia per aprire il frammento video corrispondente.','panel-note'));
+    }
     if(categories&&comparisons.length){
       significant.forEach((c,i)=>{
         const a=categories.indexOf(c.epochA),b=categories.indexOf(c.epochB);if(a<0||b<0)return;
@@ -133,14 +161,14 @@
     for(const tr of traces){
       const traceLayer=svgEl('g',{'data-trace-subject':tr.subjectId||''});
       if(bars)traceLayer.setAttribute('clip-path',`url(#${clipId})`);
-      if(tr.isolationOnly){traceLayer.dataset.isolationOnly='true';traceLayer.style.display='none';}
+      if(tr.isolationOnly){traceLayer.dataset.isolationOnly='true';}
       svg.append(traceLayer);
       if(tr.swarm&&categories){
         for(let i=0;i<tr.x.length;i++){
           if(!C.finite(tr.y[i]))continue;
           const point=swarmPositions.get(tr)[i],label=`${tr.name} · ${categories[i]}: ${fmt(tr.y[i])}`;
           const circle=svgEl('circle',{cx:X(tr.x[i])+point.dx,cy:Y(tr.y[i]),r:point.r,fill:tr.color,stroke:'white','stroke-width':.6,tabindex:0,role:'button','aria-label':`Evidenzia ${label}`});
-          circle.append(svgEl('title',{},label));circle.style.cursor='pointer';
+          circle.append(svgEl('title',{},label));
           const select=()=>document.dispatchEvent(new CustomEvent('metrics-isolate-subject',{detail:{id:tr.subjectId}}));
           circle.addEventListener('click',select);circle.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select();}});traceLayer.append(circle);
         }
@@ -169,7 +197,8 @@
     if(hover){svg.addEventListener('pointermove',event=>{const rect=svg.getBoundingClientRect(),x=xmin+((event.clientX-rect.left)/rect.width*w-p.l)/(w-p.l-p.r)*(xmax-xmin);$('tooltip').textContent=hover(x);$('tooltip').hidden=false;$('tooltip').style.left=Math.max(5,Math.min(event.clientX+12,window.innerWidth-320))+'px';$('tooltip').style.top=Math.max(5,Math.min(event.clientY+12,window.innerHeight-110))+'px';});svg.addEventListener('pointerleave',()=>{$('tooltip').hidden=true;});}
     chart.append(svg);
     if(!categories&&mode==='series')window.MetricsVideo?.attach(svg,{min:xmin,max:xmax,left:p.l,top:p.t,width:w-p.l-p.r,height:h-p.t-p.b});
-    const legend=node('div',undefined,'legend');for(const tr of traces){const span=node('span'),dot=node('i');span.dataset.traceSubject=tr.subjectId||'';if(tr.isolationOnly){span.dataset.isolationOnly='true';span.style.display='none';}dot.style.background=tr.color;span.append(dot,document.createTextNode(tr.name));legend.append(span);}chart.append(legend);
+    if(target==='chart'&&!categories)return;
+    const legend=node('div',undefined,'legend');for(const tr of traces){const span=node('span'),dot=node('i');span.dataset.traceSubject=tr.subjectId||'';if(tr.isolationOnly){span.dataset.isolationOnly='true';}dot.style.background=tr.color;span.append(dot,document.createTextNode(tr.name));legend.append(span);}chart.append(legend);
   }
   function table(headers,rows){const t=node('table'),head=node('thead'),tr=node('tr');headers.forEach(h=>tr.append(node('th',h)));head.append(tr);t.append(head);const body=node('tbody');rows.slice(0,500).forEach(row=>{const tr=node('tr');row.forEach(v=>tr.append(node('td',v)));body.append(tr);});t.append(body);$('results').append(t);if(rows.length>500)$('results').append(node('p','Anteprima: prime 500 righe. Il CSV contiene tutti i risultati.','panel-note'));}
   let visualIsolationIds=null;
@@ -180,8 +209,7 @@
     const isolated=ids?.length?new Set(ids):null;
     for(const trace of $('chart').querySelectorAll('[data-trace-subject]')){
       const emphasized=isolated?.has(trace.dataset.traceSubject)||false;
-      if(trace.dataset.isolationOnly)trace.style.display=emphasized?'':'none';
-      trace.style.opacity=isolated?(emphasized?'1':'0.10'):'';
+      trace.classList.toggle('is-dimmed',Boolean(isolated&&!emphasized));
       trace.classList.toggle('is-isolated',emphasized);
     }
   }
@@ -240,8 +268,22 @@
     for(const message of [...new Set(warnings)])$('warnings').append(node('p',message));
   }
   function demo(){
-    generation++;const recordings=Array.from({length:6},(_,i)=>({id:`demo-${i+1}`,subject:`SBJ_${String(i+1).padStart(2,'0')}`,epochs:['bslaperti','task1','task2'].map((id,e)=>{const dt=[.25,.5,.4][i%3],length=(e?24+i*4:16);const time=Array.from({length:Math.floor(length/dt)+1},(_,j)=>Number((j*dt).toFixed(6)));return {id,metrics:Object.fromEntries(['AWI','FMT','WL'].map((m,k)=>[m,{time,values:time.map(t=>2+k+i*.15+Math.sin(t*.7+i)*.45+(e?e*.7+Math.sin(t*.2)*.3:0))}]))};})}));
-    dataset=C.validate({schema_version:1,time_unit:'s',recordings});selected=new Set(recordings.map(r=>r.id));refresh();$('epoch').value='task1';$('baseline').value='bslaperti';render();
+    try{
+      const next=C.validate(globalThis.MetricsDemo.createDataset());
+      const videos=Object.entries(next.demo_info.videos).map(([epoch,item])=>({epoch,name:item.file,url:new URL(item.file,document.baseURI).href}));
+      generation++;dataset=next;selected=new Set(next.recordings.map(r=>r.id));mode='series';
+      summaryEpochs.clear();knownEpochs.clear();
+      for(const id of ['from','to','baseFrom','baseTo','step','gap','epochSearch','baselineSearch','summaryEpochSearch'])$(id).value='';
+      $('normalization').value='none';$('range').value='intersection';$('interpolation').value='linear';
+      $('individuals').checked=$('average').checked=true;
+      options('metric',allMetrics());$('metric').value='AWI';
+      options('epoch',allEpochs());$('epoch').value='stim_arancia_';
+      options('baseline',allEpochs());$('baseline').value='baseline';
+      window.MetricsVideo.replaceAssignments(videos);
+      const rendered=refresh();$('viewTab').click();
+      $('status').textContent='Esempio sintetico: 35 soggetti · 10 metriche (2 a 60 Hz) · 2 stimoli + baseline di 10 s · video già associati.';
+      return rendered;
+    }catch(error){$('errors').textContent=`Impossibile caricare l’esempio: ${error.message}`;}
   }
   function csvCell(v){let s=v===null||v===undefined?'':String(v);if(typeof v==='string'&&/^[=+@\-\t\r]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';}
   $('export').onclick=()=>{if(!exportRows.length)return;return MetricsBusy.run('Preparazione del file CSV…',async()=>{const headers=[...new Set(exportRows.flatMap(Object.keys))],csv='\uFEFF'+[headers,...exportRows.map(r=>headers.map(k=>r[k]))].map(r=>r.map(csvCell).join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),a=node('a');a.href=url;a.download=`metrics-${mode}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}).catch(error=>{$('errors').textContent=error.message;});};

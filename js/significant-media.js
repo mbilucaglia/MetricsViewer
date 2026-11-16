@@ -11,7 +11,12 @@
     }
     return out;
   }
-  if(typeof module==='object'&&module.exports){module.exports={intervals};return;}
+  // Display each sample's temporal cell; keep clip endpoints at measured instants.
+  function bands(points,step){
+    const half=Number.isFinite(step)&&step>0?step/2:0;
+    return intervals(points,step).map(range=>({...range,left:range.start-half,right:range.end+half}));
+  }
+  if(typeof module==='object'&&module.exports){module.exports={intervals,bands};return;}
   const $=id=>document.getElementById(id);
   let context=null,ranges=[],cancel=null;
   const players=new Set();
@@ -25,7 +30,7 @@
     const available=!!root.MetricsVideo?.source(context.epoch);
     $('mediaStatus').textContent=!ranges.length?'Nessun istante significativo (p finale ≤ 0,05).':!available?'Associa un video a questa epoca per estrarre frame e clip.':'';
     for(const r of ranges){
-      const row=document.createElement('div');row.className='significant-interval';
+      const row=document.createElement('div');row.className='significant-interval';row.tabIndex=-1;row.dataset.start=r.start;row.dataset.end=r.end;
       const label=document.createElement('span');label.textContent=`${format(r.start)}–${format(r.end)} s · ${r.count} istanti · p min ${r.minP.toPrecision(3)}`;row.append(label);
       if(available)row.append(miniPlayer(r,root.MetricsVideo.source(context.epoch).url));
       for(const [text,kind]of [['Vai al video','seek'],['Frame PNG (p minimo)','frame'],['Clip video','clip']]){
@@ -40,26 +45,59 @@
     const media=document.createElement('video');media.src=url;media.preload='metadata';media.playsInline=true;media.setAttribute('aria-label',`Segmento significativo da ${format(range.start)} a ${format(range.end)} secondi`);
     const controls=document.createElement('div');controls.className='segment-controls';
     const play=document.createElement('button');play.type='button';play.textContent='▶ Riproduci';play.disabled=true;
-    const seek=document.createElement('input');seek.type='range';seek.min=range.start;seek.max=range.end;seek.step='.01';seek.value=range.start;seek.disabled=true;seek.setAttribute('aria-label','Posizione nel segmento');
+    const seek=document.createElement('input');seek.type='range';seek.min=range.start;seek.max=range.end;seek.step='any';seek.value=range.start;seek.disabled=true;seek.setAttribute('aria-label','Posizione nel segmento');
     const volume=document.createElement('input');volume.type='range';volume.min=0;volume.max=1;volume.step='.05';volume.value=1;volume.setAttribute('aria-label','Volume del segmento');volume.className='segment-volume';
-    const time=document.createElement('output');time.textContent=`${format(range.start)} s`;
+    const time=document.createElement('output');const displayTime=value=>`${value.toFixed(2).replace('.',',')} s`;time.textContent=displayTime(range.start);
     const note=document.createElement('p');note.className='panel-note';note.textContent=range.start===range.end?'Istante isolato · fotogramma':'Audio originale · riproduzione limitata al segmento';
-    let animation=null;
+    let animation=null,seekAnimation=null,pendingTime=range.start,dragging=false,resumeAfterDrag=false,lastTimePaint=-Infinity;
     const stop=()=>{if(animation!==null)cancelAnimationFrame(animation);animation=null;};
-    const sync=()=>{seek.value=media.currentTime;time.textContent=`${format(Math.min(range.end,media.currentTime))} s`;if(media.currentTime>=range.end){media.pause();media.currentTime=range.end;}else if(!media.paused)animation=requestAnimationFrame(sync);};
+    const paint=(value,force=false)=>{
+      const clamped=Math.max(range.start,Math.min(range.end,value));
+      seek.value=clamped;
+      const now=performance.now();
+      if(force||now-lastTimePaint>=100){const text=displayTime(clamped);if(time.textContent!==text)time.textContent=text;lastTimePaint=now;}
+    };
+    const flushSeek=()=>{if(seekAnimation!==null)cancelAnimationFrame(seekAnimation);seekAnimation=null;media.currentTime=pendingTime;};
+    const sync=()=>{animation=null;if(dragging)return;paint(media.currentTime);if(media.currentTime>=range.end){media.pause();media.currentTime=range.end;paint(range.end,true);}else if(!media.paused)animation=requestAnimationFrame(sync);};
     media.addEventListener('loadedmetadata',()=>{
       if(range.start>=media.duration||range.start<0||range.end>media.duration){note.textContent='Intervallo non coperto dalla durata del video.';return;}
-      media.currentTime=range.start;play.disabled=seek.disabled=range.start===range.end;
+      media.currentTime=pendingTime;paint(pendingTime,true);play.disabled=seek.disabled=range.start===range.end;
     });
     media.addEventListener('play',()=>{root.MetricsVideo?.pause();for(const p of players)if(p.media!==media)p.media.pause();play.textContent='Ⅱ Pausa';stop();sync();});
-    media.addEventListener('pause',()=>{stop();play.textContent='▶ Riproduci';});
+    media.addEventListener('pause',()=>{stop();play.textContent='▶ Riproduci';if(!dragging)paint(media.currentTime,true);});
+    media.addEventListener('seeked',()=>{if(!dragging&&seekAnimation===null)paint(media.currentTime,true);});
     media.addEventListener('error',()=>{note.textContent='Video non riproducibile.';play.disabled=seek.disabled=true;});
     play.onclick=()=>{if(!media.paused){media.pause();return;}if(media.currentTime>=range.end||media.currentTime<range.start)media.currentTime=range.start;media.play().catch(e=>{note.textContent=e.message;});};
-    seek.oninput=()=>{media.currentTime=Number(seek.value);time.textContent=`${format(media.currentTime)} s`;};volume.oninput=()=>{media.volume=Number(volume.value);};
+    seek.addEventListener('pointerdown',event=>{
+      pendingTime=media.currentTime;dragging=true;resumeAfterDrag=!media.paused;media.pause();seek.setPointerCapture(event.pointerId);
+    });
+    seek.oninput=()=>{
+      pendingTime=Math.max(range.start,Math.min(range.end,Number(seek.value)));paint(pendingTime,true);
+      if(seekAnimation===null)seekAnimation=requestAnimationFrame(flushSeek);
+    };
+    const finishDrag=()=>{
+      if(!dragging)return;flushSeek();dragging=false;paint(pendingTime,true);
+      if(resumeAfterDrag&&pendingTime<range.end)media.play().catch(e=>{note.textContent=e.message;});
+      resumeAfterDrag=false;
+    };
+    seek.addEventListener('pointerup',finishDrag);seek.addEventListener('pointercancel',finishDrag);seek.addEventListener('lostpointercapture',finishDrag);
+    seek.onchange=()=>{flushSeek();paint(pendingTime,true);};
+    volume.oninput=()=>{media.volume=Number(volume.value);};
     const volumeLabel=document.createElement('label');volumeLabel.className='segment-volume-label';volumeLabel.append(document.createTextNode('Volume'),volume);
     controls.append(play,seek,time,volumeLabel);wrapper.append(media,controls,note);
-    players.add({media,dispose:()=>{stop();media.pause();media.removeAttribute('src');media.load();}});
+    players.add({media,range,seekTo:value=>{pendingTime=value;media.pause();if(media.readyState>=1&&value<media.duration){media.currentTime=value;paint(value,true);}},dispose:()=>{stop();if(seekAnimation!==null)cancelAnimationFrame(seekAnimation);media.pause();media.removeAttribute('src');media.load();}});
     return wrapper;
+  }
+  function focusTime(time){
+    const range=ranges.find(r=>time>=r.start&&time<=r.end);if(!range)return;
+    root.MetricsVideo?.pause();
+    for(const player of players){player.media.pause();if(player.range===range)player.seekTo(time);}
+    const rows=$('significantIntervals').children;
+    for(const row of rows){
+      const selected=Number(row.dataset.start)===range.start&&Number(row.dataset.end)===range.end;
+      row.classList.toggle('is-selected',selected);
+      if(selected){row.scrollIntoView({block:'center',behavior:'smooth'});row.focus({preventScroll:true});}
+    }
   }
   function waitEvent(media,name,signal,action){
     return new Promise((resolve,reject)=>{
@@ -130,5 +168,5 @@
   document.addEventListener('metrics-video-changed',()=>{cancel?.();render();});
   document.addEventListener('visibilitychange',()=>{if(document.hidden){cancel?.();for(const p of players)p.media.pause();}});
   $('viewTab').addEventListener('click',()=>{for(const p of players)p.media.pause();});
-  root.MetricsSignificantMedia={show,clear,intervals};
+  root.MetricsSignificantMedia={show,clear,intervals,bands,focusTime};
 })(globalThis);

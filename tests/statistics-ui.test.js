@@ -27,7 +27,7 @@ function setup(){
 test('summary UI defaults to within-subject, displays omnibus/post-hoc and exports paired metadata',async()=>{
   const ui=setup();ui.ready();assert.equal(ui.get('design').value,'within');assert.equal(ui.get('groupEditor').hidden,true);assert.equal(ui.get('nullValue').disabled,true);
   await ui.get('runStats').onclick();assert.match(ui.get('statsStatus').textContent,/Completato/);assert.match(ui.get('statsResults').textContent,/misure ripetute/);assert.match(ui.get('statsResults').textContent,/max-/);
-  assert.equal(ui.plots[0].options.categories.length,3);assert.equal(ui.plots[1].traces[0].y.length,3);
+  assert.equal(ui.plots[0].options.categories.length,3);assert.equal(ui.plots.length,1);assert.equal(ui.plots[0].options.target,'statsGroupPlot');
   await ui.get('exportStats').onclick();const csv=await ui.blobs[0].text();assert.match(csv,/mean_difference/);assert.match(csv,/epoch_a/);assert.match(csv,/F a misure ripetute/);assert.match(csv,/max-/);
   ui.get('significantOnly').checked=true;ui.get('significantOnly').onchange();
   ui.ready(['A','B']);await ui.get('runStats').onclick();assert.match(ui.get('statsStatus').textContent,/Un solo confronto appaiato/);
@@ -45,6 +45,8 @@ test('significant filter omits nonsignificant rows while media receives correcte
   const ui=setup();ui.get('significantOnly').checked=true;ui.ready(['A'],'series');await ui.get('runStats').onclick();
   const result=ui.media.at(-1);assert.equal(result.meta.view,'series');assert.equal(result.results.length,2);
   const significant=result.results.filter(r=>Number.isFinite(r.pAdjusted)&&r.pAdjusted<=.05);
+  assert.deepEqual(ui.plots.at(-1).options.significancePoints.map(p=>p.time),result.results.map(p=>p.time));
+  assert.deepEqual(ui.plots.at(-1).options.significancePoints.map(p=>p.pAdjusted),result.results.map(p=>p.pAdjusted));
   assert.equal(ui.get('statsResults').children[0].children[1].children.length,significant.length);
   ui.get('significantOnly').checked=false;ui.get('significantOnly').onchange();assert.equal(ui.get('statsResults').children[0].children[1].children.length,2);
   ui.handlers['metrics-invalidated']({detail:{mode:'series'}});assert.equal(ui.media.at(-1),null);

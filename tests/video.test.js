@@ -43,3 +43,12 @@ test('playback updates all cursors; plot seek, keyboard and duration limits',()=
   t.api.setContext(['A'],'A','summary');assert.equal(t.video.paused,true);assert.equal(t.frames.size,0);assert.equal(t.get('videoCard').hidden,true);
   t.api.setContext(['A'],'A','series');t.video.handlers.error();assert.match(t.get('videoError').textContent,/non riproducibile/);
 });
+test('bundled videos replace uploads, switch by epoch and never revoke file URLs',()=>{
+  const t=setup();t.api.setContext(['A','B'],'A','series');t.assign(0,'upload.mp4');const uploaded=t.video.src;
+  const items=[{epoch:'A',url:'file:///a.mp4',name:'a.mp4'},{epoch:'B',url:'file:///b.mp4',name:'b.mp4'}];
+  t.api.replaceAssignments(items);assert.ok(t.revoked.includes(uploaded));assert.equal(t.video.src,items[0].url);
+  t.api.setContext(['A','B'],'B','series');assert.equal(t.video.src,items[1].url);
+  t.video.currentTime=8;t.api.replaceAssignments(items);assert.equal(t.video.currentTime,0);
+  t.assign(1,'replacement.mp4');const replacement=t.video.src;t.api.setContext([],'','series');
+  assert.ok(t.revoked.includes(replacement));assert.ok(t.revoked.every(url=>url.startsWith('blob:')));
+});
