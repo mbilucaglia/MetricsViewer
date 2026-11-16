@@ -1,12 +1,13 @@
 (function(root){
   'use strict';
-  function create({document:doc=root.document,window:win=root,onClose=()=>{}}={}){
+  function create({document:doc=root.document,window:win=root,onClose=()=>{},dock=null}={}){
     const windows=new Map(),ns='http://www.w3.org/2000/svg';
     let overlay=null,active=null,frame=null;
     const clamp=(n,low,high)=>Math.max(low,Math.min(Math.max(low,high),n));
     function mark(anchor,open){anchor?.classList.toggle('is-open',open);anchor?.setAttribute('aria-expanded',String(open));}
     function front(item){active=item.index;for(const other of windows.values())other.box.classList.toggle('is-front',other===item);}
     function position(item){
+      if(dock)return;
       const {box,anchor,line}=item;
       const width=box.offsetWidth,height=box.offsetHeight;
       const viewportWidth=doc.documentElement?.clientWidth||win.innerWidth;
@@ -21,10 +22,13 @@
     }
     function update(){frame=null;for(const item of windows.values())position(item);}
     function schedule(){if(frame===null)frame=win.requestAnimationFrame(update);}
-    function escape(event){if(event.key==='Escape'&&windows.has(active)){event.preventDefault();close(active,true);}}
+    function escape(event){if(event.key==='Escape'&&!event.defaultPrevented&&!event.target?.closest?.('dialog[open]')&&windows.has(active)){event.preventDefault();close(active,true);}}
     function start(){
-      overlay=doc.createElementNS(ns,'svg');overlay.classList.add('moment-pip-links');overlay.setAttribute('aria-hidden','true');doc.body.append(overlay);
-      win.addEventListener('resize',schedule);doc.addEventListener('scroll',schedule,true);doc.addEventListener('keydown',escape);
+      if(!dock){
+        overlay=doc.createElementNS(ns,'svg');overlay.classList.add('moment-pip-links');overlay.setAttribute('aria-hidden','true');doc.body.append(overlay);
+        win.addEventListener('resize',schedule);doc.addEventListener('scroll',schedule,true);
+      }
+      doc.addEventListener('keydown',escape);
     }
     function stop(){
       win.removeEventListener('resize',schedule);doc.removeEventListener('scroll',schedule,true);doc.removeEventListener('keydown',escape);
@@ -32,26 +36,56 @@
     }
     function close(index,restoreFocus=false){
       const item=windows.get(index);if(!item)return;
-      windows.delete(index);item.observer?.disconnect();mark(item.anchor,false);item.line.remove();onClose(index,item.row);item.box.remove();
+      windows.delete(index);item.observer?.disconnect();mark(item.anchor,false);item.line?.remove();onClose(index,item.row);item.box.remove();
       if(restoreFocus&&item.anchor?.isConnected)item.anchor.focus({preventScroll:true});
       if(!windows.size)stop();else front([...windows.values()].at(-1));
     }
-    function open(index,anchor,row,label){
-      if(windows.has(index)){const item=windows.get(index);mark(item.anchor,false);item.anchor=anchor;mark(anchor,true);front(item);position(item);item.handle.focus({preventScroll:true});return item;}
+    function open(index,anchor,row,label,rank='0%',reveal=true){
+      if (windows.has(index)) {
+        const item = windows.get(index);
+        mark(item.anchor, false);
+        item.anchor = anchor;
+        mark(anchor, true);
+        position(item);
+        if (reveal) { front(item); item.handle.focus({preventScroll:true}); }
+        return item;
+      }
       if(!windows.size)start();
-      const box=doc.createElement('section');box.className='moment-pip';box.classList.add('is-compact');box.setAttribute('role','dialog');box.setAttribute('aria-label',label);
+      const box=doc.createElement('section');box.className='moment-pip';box.classList.add('is-compact');box.setAttribute('role',dock?'group':'dialog');box.setAttribute('aria-label',dock?`Anteprima ${index+1} · ${label}`:label);
+      if(dock){
+        box.classList.add('is-docked');
+        box.dataset.index=index;
+      }
       const header=doc.createElement('div');header.className='moment-pip__header';
       const handle=doc.createElement('button');handle.type='button';handle.className='moment-pip__drag';handle.textContent=`⋮⋮ ${index+1}`;handle.title=label;handle.setAttribute('aria-label',`Sposta frammento ${index+1}: trascina o usa le frecce`);
       const link=doc.createElement('button');link.type='button';link.className='moment-pip__link';link.textContent='↗';link.title='Mostra/nascondi collegamento';link.setAttribute('aria-pressed','true');link.setAttribute('aria-label','Mostra il segmento di collegamento al punto');
       const dismiss=doc.createElement('button');dismiss.type='button';dismiss.textContent='×';dismiss.setAttribute('aria-label','Chiudi anteprima');dismiss.onclick=()=>close(index,true);
       const controls=doc.createElement('button');controls.type='button';controls.className='moment-pip__controls';controls.textContent='⋯';controls.title='Mostra/nascondi controlli';controls.setAttribute('aria-label','Mostra controlli di riproduzione ed esportazione');controls.setAttribute('aria-expanded','false');
-      header.append(handle,link,controls,dismiss);box.append(header,row);doc.body.append(box);
-      const line=doc.createElementNS(ns,'line');overlay.append(line);
-      const a=anchor.getBoundingClientRect(),offset=(windows.size%6)*24;
-      const item={index,box,row,anchor,line,handle,controls,compact:true,linked:true,x:a.right+12+offset,y:a.top-box.offsetHeight/2+offset};windows.set(index,item);mark(anchor,true);
+      let line=null;
+      if(dock){
+        const badge=doc.createElement('span');badge.className='moment-pip__number';badge.textContent=String(index+1);
+        badge.setAttribute('style', '--preview-rank: ' + rank);
+        header.append(badge,controls,dismiss);
+        box.append(header,row);
+        const next=Array.from(dock.children).find(child=>Number(child.dataset.index)>index);
+        dock.insertBefore(box,next||null);
+      }else{
+        header.append(handle,link,controls,dismiss);box.append(header,row);doc.body.append(box);
+        line=doc.createElementNS(ns,'line');overlay.append(line);
+      }
+      const a=dock ? {right:0,top:0} : anchor.getBoundingClientRect(),offset=(windows.size%6)*24;
+      const item={index,box,row,anchor,line,handle:dock?dismiss:handle,controls,compact:true,linked:true,x:a.right+12+offset,y:a.top-box.offsetHeight/2+offset};windows.set(index,item);mark(anchor,true);
       box.addEventListener('pointerdown',()=>front(item));box.addEventListener('focusin',()=>front(item));
       link.onclick=()=>{item.linked=!item.linked;link.setAttribute('aria-pressed',String(item.linked));position(item);};
       controls.onclick=()=>{item.compact=!item.compact;box.classList.toggle('is-compact',item.compact);controls.setAttribute('aria-expanded',String(!item.compact));position(item);};
+      if (dock) {
+        front(item);
+        if (reveal) {
+          box.scrollIntoView({block:'nearest',inline:'nearest'});
+          dismiss.focus({preventScroll:true});
+        }
+        return item;
+      }
       let drag=null;
       handle.addEventListener('pointerdown',event=>{
         if(event.button!==0)return;event.preventDefault();front(item);handle.focus({preventScroll:true});
@@ -71,7 +105,7 @@
       front(item);position(item);dismiss.focus({preventScroll:true});return item;
     }
     function reanchor(anchors){for(const item of windows.values()){mark(item.anchor,false);item.anchor=anchors[item.index]||null;mark(item.anchor,true);}update();}
-    return {open,close,reanchor,has:index=>windows.has(index),clear:()=>{for(const index of [...windows.keys()])close(index);}};
+    return {open,close,reanchor,has:index=>windows.has(index),get size(){return windows.size;},clear:()=>{for(const index of [...windows.keys()])close(index);}};
   }
   if(typeof module==='object'&&module.exports)module.exports={create};else root.MetricsFloatingMedia={create};
 })(globalThis);

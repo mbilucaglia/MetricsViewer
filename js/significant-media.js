@@ -7,7 +7,11 @@
       if(!significant){run=null;previous=null;continue;}
       const adjacent=run&&Number.isFinite(step)&&step>0&&Math.abs(p.time-previous-step)<=Math.max(1e-8,step*1e-5);
       if(!adjacent){run={start:p.time,end:p.time,count:0,minP:p.pAdjusted,peak:p.time};out.push(run);}
-      run.end=p.time;run.count++;if(p.pAdjusted<run.minP){run.minP=p.pAdjusted;run.peak=p.time;}previous=p.time;
+      run.end=p.time;run.count++;if(p.pAdjusted<run.minP){run.minP=p.pAdjusted;run.peak=p.time;}
+      if(Number.isFinite(p.magnitude) && (run.magnitude === undefined || p.magnitude > run.magnitude)){
+        run.magnitude=p.magnitude;run.effectPeak=p.time;
+      }
+      previous=p.time;
     }
     return out;
   }
@@ -16,44 +20,131 @@
     const half=Number.isFinite(step)&&step>0?step/2:0;
     return intervals(points,step).map(range=>({...range,left:range.start-half,right:range.end+half}));
   }
-  if(typeof module==='object'&&module.exports){module.exports={intervals,bands};return;}
-  function createViewer(ids={}, {floatingOnly=false}={}){
+  function rankIntervals(ranges){
+    return ranges.slice().sort((a,b)=>(b.magnitude ?? -1)-(a.magnitude ?? -1)||a.start-b.start)
+      .map(range=>({...range,peak:range.effectPeak ?? range.peak}));
+  }
+  function previewRank(index, total) {
+    return (100 * index / Math.max(1, total - 1)).toFixed(2) + '%';
+  }
+  if(typeof module==='object'&&module.exports){module.exports={intervals,bands,rankIntervals};return;}
+  const formatEstimate = new Intl.NumberFormat('it-IT', { maximumSignificantDigits: 4, useGrouping: false }).format;
+
+  function renderPreviewSummary(target, summary) {
+    const time = document.createElement('p');
+    time.className = 'preview-summary__time';
+    time.textContent = formatEstimate(summary.time) + ' s';
+    if (Number.isFinite(summary.pAdjusted)) {
+      const pLabel = summary.omnibus ? 'p globale corretto' : 'p corretto';
+      time.textContent += ' · ' + pLabel + ' ' + formatEstimate(summary.pAdjusted);
+    }
+    const estimates = summary.estimates.map(({ label = 'Media', mean, halfWidth }) => {
+      const line = document.createElement('p');
+      const interval = Number.isFinite(halfWidth)
+        ? '[' + formatEstimate(mean - halfWidth) + '; ' + formatEstimate(mean + halfWidth) + ']'
+        : 'n.d.';
+      line.textContent = label + ' ' + formatEstimate(mean) + ' · IC 95% ' + interval;
+      return line;
+    });
+    target.replaceChildren(time, ...estimates);
+  }
+  function createViewer(ids={}, {floatingOnly=false,dock=null,anchorEvent=null,openAllButton=null}={}){
   const $=id=>document.getElementById(ids[id]||id);
   let context=null,ranges=[],cancel=null,activeRange=null,floating=null;
+  let summaryAt = null;
   const rows=new Map();
+  let anchors = [];
+  function allPreviewsOpen() {
+    return ranges.length > 0 && floating?.size === ranges.length;
+  }
+  function updateOpenAllButton() {
+    if (!openAllButton) return;
+    const allOpen = allPreviewsOpen();
+    openAllButton.disabled = !ranges.length;
+    openAllButton.textContent = allOpen ? 'Nascondi tutti' : 'Disegna tutti';
+    openAllButton.title = allOpen ? 'Chiudi tutte le anteprime' : 'Apri tutte le anteprime';
+  }
   function closeFloating(){floating?.clear();}
-  function openFloating(index,anchor){
+  function openFloating(index,anchor,reveal=true){
     const range=ranges[index],entry=rows.get(index);if(!range||!entry)return;
-    if(!floating)floating=root.MetricsFloatingMedia.create({onClose:(closedIndex,row)=>{
+    if(!floating)floating=root.MetricsFloatingMedia.create({dock,onClose:(closedIndex,row)=>{
       const closedRange=ranges[closedIndex];
       if(activeRange===closedRange)cancel?.();
       for(const player of players)if(player.range===closedRange)player.media.pause();
       $('significantIntervals').append(row);
+      updateOpenAllButton();
     }});
     const alreadyOpen=floating.has(index);
-    floating.open(index,anchor,entry.row,range.label||'Frammento estratto');
-    if(!alreadyOpen)for(const player of players)if(player.range===range)player.seekTo(range.peak);
+    floating.open(index,anchor,entry.row,range.label||'Frammento estratto',previewRank(index,ranges.length),reveal);
+    if (!alreadyOpen) {
+      const data = entry.summary && summaryAt?.(range.peak);
+      if (data) renderPreviewSummary(entry.summary, data);
+      for (const player of players) if (player.range === range) player.seekTo(range.peak);
+    }
+    updateOpenAllButton();
     $('tooltip').hidden=true;
   }
-  if(floatingOnly&&ids.significantMedia)document.addEventListener('metrics-markers-rendered',event=>floating?.reanchor(event.detail.anchors));
+  if (anchorEvent) document.addEventListener(anchorEvent, event => {
+    anchors = event.detail.anchors;
+    floating?.reanchor(anchors);
+  });
+  if (openAllButton) openAllButton.onclick = () => {
+    if (allPreviewsOpen()) closeFloating();
+    else for (const index of ranges.keys()) openFloating(index, anchors[index] ?? null, false);
+  };
   const players=new Set();
   function disposePlayers(){for(const p of players)p.dispose();players.clear();}
-  function clear(){closeFloating();cancel?.();disposePlayers();context=null;ranges=[];rows.clear();$('significantMedia').hidden=true;$('significantIntervals').replaceChildren();$('mediaStatus').textContent='';}
-  function show(points,meta){clear();if(meta.view!=='series')return;context=meta;ranges=intervals(points,Number(meta.grid_step));render();}
+  function clear(){closeFloating();cancel?.();disposePlayers();context=null;ranges=[];summaryAt=null;rows.clear();updateOpenAllButton();$('significantMedia').hidden=true;$('significantIntervals').replaceChildren();$('mediaStatus').textContent='';}
+  function show(points,meta,describePoint){
+    clear();
+    if (meta.view !== 'series') return;
+    context = meta;
+    const step = Number(meta.grid_step);
+    ranges = rankIntervals(intervals(points, step));
+    if (describePoint) {
+      const tolerance = step > 0 ? Math.min(step / 4, Math.max(1e-8, step * 1e-5)) : 0;
+      // Statistical results are on the analysis grid. Keep their indices for matching the plotted estimates.
+      const indices = new Map();
+      for (const [index, point] of points.entries()) {
+        if (Number.isFinite(point.pAdjusted) && point.pAdjusted <= .05) indices.set(point.time, index);
+      }
+      summaryAt = time => {
+        let index = indices.get(time);
+        if (index === undefined && tolerance > 0) {
+          const near = points.find(point => Math.abs(point.time - time) <= tolerance);
+          index = indices.get(near?.time);
+        }
+        return index === undefined ? null : describePoint(index);
+      };
+    }
+    render();
+  }
   function showRanges(items,meta){clear();context=meta;ranges=items;render();}
   const format=n=>Number(n.toFixed(6)).toString();
   function render(){
     if(!context)return;
     closeFloating();disposePlayers();rows.clear();$('significantMedia').hidden=floatingOnly;$('significantIntervals').replaceChildren();
+    updateOpenAllButton();
     const available=!!root.MetricsVideo?.source(context.epoch);
     $('mediaStatus').textContent=!ranges.length?(context.criterion?'Nessun istante trovato con questi criteri.':'Nessun istante significativo (p finale ≤ 0,05).'):!available?'Associa un video a questa epoca per estrarre frame e clip.':'';
     for(const [index,r] of ranges.entries()){
       const row=document.createElement('div');row.className='significant-interval';row.tabIndex=-1;row.dataset.index=index;row.dataset.start=r.start;row.dataset.end=r.end;
+      const data = r.summary ?? summaryAt?.(r.peak);
+      let summary = null;
+      if (data) {
+        summary = document.createElement('div');
+        summary.className = 'preview-summary';
+        summary.tabIndex = 0;
+        summary.setAttribute('role', 'group');
+        summary.setAttribute('aria-label', 'Statistiche dell’istante');
+        renderPreviewSummary(summary, data);
+        row.append(summary);
+      }
       const label=document.createElement('span');label.textContent=r.label||`${format(r.start)}–${format(r.end)} s · ${r.count} istanti · p min ${r.minP.toPrecision(3)}`;row.append(label);
       if(available)row.append(miniPlayer(r,root.MetricsVideo.source(context.epoch).url));
       const exportButtons=[];
       for(const [text,kind]of [['Vai al video','seek'],['Frame PNG (p minimo)','frame'],['Clip video','clip']]){
-        const button=document.createElement('button');button.type='button';button.textContent=kind==='frame'&&context.criterion?'Frame PNG (istante selezionato)':text;button.disabled=!available||(kind==='clip'&&r.start===r.end);
+        const button=document.createElement('button');button.type='button';button.textContent=kind==='frame'?(context.criterion?'Frame PNG (istante selezionato)':Number.isFinite(r.magnitude)?'Frame PNG (differenza massima)':text):text;button.disabled=!available||(kind==='clip'&&r.start===r.end);
         button.onclick=()=>kind==='seek'?root.MetricsVideo.seek(r.peak):extract(r,kind);row.append(button);if(kind!=='seek')exportButtons.push(button);
       }
       const status=floatingOnly?document.createElement('p'):$('mediaStatus');
@@ -63,7 +154,7 @@
         if(!available)status.textContent='Associa un video a questa epoca per estrarre frame e clip.';
         cancelButton.type='button';cancelButton.className='segment-cancel';cancelButton.textContent='Annulla estrazione';cancelButton.hidden=true;row.append(status,cancelButton);
       }
-      rows.set(index,{row,status,cancelButton,exportButtons});
+      rows.set(index,{row,status,cancelButton,exportButtons,summary});
       $('significantIntervals').append(row);
     }
   }
@@ -120,12 +211,16 @@
   }
   function focusTime(time,index=null,anchor=null){
     const range=Number.isInteger(index)?ranges[index]:ranges.find(r=>time>=r.start&&time<=r.end);if(!range)return;
-    if(floatingOnly&&anchor)openFloating(ranges.indexOf(range),anchor);
+    const rangeIndex = Number.isInteger(index) ? index : ranges.indexOf(range);
+    if(floatingOnly&&anchor)openFloating(rangeIndex,anchor);
+    const summary = rows.get(rangeIndex)?.summary;
+    const data = summary && summaryAt?.(time);
+    if (data) renderPreviewSummary(summary, data);
     root.MetricsVideo?.pause();
     for(const player of players){player.media.pause();if(player.range===range)player.seekTo(time);}
     if(floatingOnly)return;
-    const rows=$('significantIntervals').children;
-    for(const [rowIndex,row] of Array.from(rows).entries()){
+    const intervalRows=$('significantIntervals').children;
+    for(const [rowIndex,row] of Array.from(intervalRows).entries()){
       const selected=Number.isInteger(index)?rowIndex===index:Number(row.dataset.start)===range.start&&Number(row.dataset.end)===range.end;
       row.classList.toggle('is-selected',selected);
       if(selected){row.scrollIntoView({block:'center',behavior:'smooth'});row.focus({preventScroll:true});}
@@ -205,5 +300,5 @@
   $('viewTab').addEventListener('click',()=>{closeFloating();for(const p of players)p.media.pause();});
   return {show,showRanges,clear,intervals,bands,focusTime,openFloating,closeFloating};
   }
-  root.MetricsSignificantMedia={...createViewer({}, {floatingOnly:true}),createViewer};
+  root.MetricsSignificantMedia={...createViewer({}, {floatingOnly:true,dock:document.getElementById('statsMomentsDock'),anchorEvent:'metrics-stat-bands-rendered',openAllButton:document.getElementById('openAllStatsMoments')}),createViewer,rankIntervals,previewRank};
 })(globalThis);

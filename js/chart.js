@@ -283,11 +283,56 @@
     }
 
     let momentMarkers = null;
-    let lastSeriesPlot = null;
+    const lastPlots = new Map();
+    const plotSizes = new Map();
+
+    function fitPlot(target) {
+      const saved = lastPlots.get(target);
+      const chart = $(target);
+      const viewport = chart.querySelector('.chart-plot-viewport');
+      if (!saved || !viewport?.clientWidth || !viewport.clientHeight) return;
+      const previous = plotSizes.get(target);
+      if (window.matchMedia('(min-width: 781px)').matches) {
+        const width = Math.max(620, viewport.clientWidth);
+        const height = Math.round(viewport.clientHeight * width / viewport.clientWidth);
+        if (width === previous?.width && height === previous?.height) return;
+        plotSizes.set(target, { width, height });
+      } else {
+        if (!previous) return;
+        plotSizes.delete(target);
+      }
+      const focused = chart.contains(document.activeElement) ? document.activeElement : null;
+      const previewIndex = focused?.getAttribute('data-preview-index');
+      const zoomControl = focused?.getAttribute('data-zoom-control');
+      chart.replaceChildren();
+      plot(saved.traces, saved.options);
+      if (target === 'chart') onZoom();
+      if (previewIndex != null) chart.querySelector(`[data-preview-index="${previewIndex}"]`)?.focus({preventScroll:true});
+      if (zoomControl) chart.querySelector(`[data-zoom-control="${zoomControl}"]`)?.focus({preventScroll:true});
+    }
+
+    if (typeof ResizeObserver === 'function') {
+      const fitObserver = new ResizeObserver(entries => {
+        const targets = new Set(entries.map(({target}) => ({momentsDock:'chart',statsMomentsDock:'statsGroupPlot'}[target.id] || target.id)));
+        for (const target of targets) fitPlot(target);
+      });
+      for (const id of ['chart', 'statsGroupPlot', 'momentsDock', 'statsMomentsDock']) fitObserver.observe($(id));
+    }
+
+    function previewBadge(x, y, index, total) {
+      const rank = window.MetricsSignificantMedia?.previewRank(index, total) ?? '0%';
+      const badge = svgEl('g', { class: 'preview-badge', style: '--preview-rank: ' + rank, 'aria-hidden': 'true' });
+      badge.append(
+        svgEl('circle', { cx: x, cy: y, r: 11 }),
+        svgEl('text', { x, y: y+4, 'text-anchor': 'middle' }, String(index+1))
+      );
+      return badge;
+    }
     function markMoments(points,source,onSelect){
       momentMarkers=points.length?{points,source,onSelect}:null;
-      if(!lastSeriesPlot)return;
-      const {traces,options}=lastSeriesPlot;
+      const saved = lastPlots.get('chart');
+      if (!saved) return;
+      const { traces, options } = saved;
       $('chart').replaceChildren();plot(traces,options);
     }
     function plot(traces,{categories=null,xLabel='Tempo dall’inizio dell’epoca [s]',hover=null,target='chart',title=null,bars=false,comparisons=[],significancePoints=[],significanceStep=null}={}){
@@ -296,9 +341,9 @@
         categories, xLabel, hover, target, title, bars, comparisons, significancePoints, significanceStep
       } };
       const usesMetricScale = target === 'chart' || target === 'statsGroupPlot';
+      if (usesMetricScale) lastPlots.set(target, saved);
 
       if(target==='chart'&&!categories){
-        lastSeriesPlot = saved;
         if(momentMarkers&&!traces.some(t=>momentMarkers.source.subjectId?t.subjectId===momentMarkers.source.subjectId:!t.subjectId))traces=[...traces,momentMarkers.source];
       }
 
@@ -335,10 +380,16 @@
       const significant = comparisons.filter(c => Number.isFinite(c.pAdjusted) && c.pAdjusted <= .05 &&
         categories && visibleCategory(categories.indexOf(c.epochA)) && visibleCategory(categories.indexOf(c.epochB)));
       const bracketSpace = significant.length ? 32 + significant.length * 24 : 0;
-      const w=900,h=410+bracketSpace,p={l:65,r:25,t:25+bracketSpace,b:categories?70:84};
+      const size = plotSizes.get(target);
+      const w = size?.width ?? 900;
+      // Reserve plot space when many annotations need to stack above the bars.
+      const minHeight = bracketSpace ? bracketSpace + 240 : 140;
+      const h = size ? Math.max(size.height, minHeight) : 410 + bracketSpace;
+      const p = {l:65,r:25,t:25+bracketSpace,b:categories?70:84};
       const X=x=>p.l+(x-xmin)/(xmax-xmin)*(w-p.l-p.r),Y=y=>h-p.b-(y-ymin)/(ymax-ymin)*(h-p.t-p.b);
       const hasVideoCursor = !categories && getMode() === 'series';
       const svg=svgEl('svg',{viewBox:`0 0 ${w} ${h}`,role:hasVideoCursor||(target==='chart'&&(momentMarkers||traces.some(t=>t.subjectId)))||significancePoints.length?'group':'img','aria-label':title||$('chartTitle').textContent});
+      if (size && h > size.height) svg.classList.add('chart-overflow');
       if (zoom?.selection) {
         svg.classList.add('chart-drag-zoom');
         enableDragZoom(svg, { left: p.l, top: p.t, width: w - p.l - p.r, height: h - p.t - p.b }, zoom, visible, domain, categories, redraw);
@@ -361,18 +412,25 @@
       for(const[x,label]of ticks){const t=svgEl('text',{x:X(x),y:h-p.b+24,'text-anchor':'middle'},label.length>22?label.slice(0,20)+'…':label);t.append(svgEl('title',{},label));svg.append(t);}
       svg.append(svgEl('text',{x:w/2,y:h-12,'text-anchor':'middle'},xLabel));
       const clipId=`${target}-plot-clip`;const defs=svgEl('defs'),clip=svgEl('clipPath',{id:clipId});clip.append(svgEl('rect',{x:p.l,y:p.t,width:w-p.l-p.r,height:h-p.t-p.b}));defs.append(clip);svg.append(defs);
+      const statAnchors=[];
       if(!categories&&significancePoints.length){
         const layer=svgEl('g',{class:'significance-bars','clip-path':`url(#${clipId})`});
-        for(const range of window.MetricsSignificantMedia.bands(significancePoints,significanceStep)){
+        const ranges=window.MetricsSignificantMedia.rankIntervals(window.MetricsSignificantMedia.bands(significancePoints,significanceStep));
+        for(const [index,range] of ranges.entries()){
           const left=Math.max(p.l,X(range.left)),right=Math.min(w-p.r,X(range.right));
           if(right<left)continue;
-          const label=`${fmt(range.start)}–${fmt(range.end)} s · ${range.count} istanti significativi · p minimo ${fmt(range.minP)}. Vai al frammento video.`;
-          const bar=svgEl('rect',{x:left,y:p.t,width:Math.max(1,right-left),height:h-p.t-p.b,class:'significance-bar',tabindex:0,role:'button','aria-label':label});
-          bar.append(svgEl('title',{},label));
+          const label=`Anteprima ${index+1} · ${fmt(range.start)}–${fmt(range.end)} s · ${range.count} istanti significativi · p minimo ${fmt(range.minP)}. Vai al frammento video.`;
+          const bar=svgEl('g',{class:'significance-band',tabindex:0,role:'button','aria-label':label,'data-preview-index':index});
+          const center=Math.max(p.l+12,Math.min(w-p.r-12,(left+right)/2));
+          bar.append(svgEl('title',{},label),
+            svgEl('rect',{x:left,y:p.t,width:Math.max(1,right-left),height:h-p.t-p.b,class:'significance-bar'}),
+            previewBadge(center,p.t+16+(index%2)*25,index,ranges.length));
+          statAnchors[index]=bar;
           const activate=event=>{
             event.stopPropagation();
             let time=range.peak;
-            const matrix=event.type==='click'?svg.getScreenCTM():null;
+            const onBand = event.type === 'click' && !event.target.closest('.preview-badge');
+            const matrix = onBand ? svg.getScreenCTM() : null;
             if(matrix){
               const point=svg.createSVGPoint();point.x=event.clientX;point.y=event.clientY;
               const x=point.matrixTransform(matrix.inverse()).x;
@@ -380,14 +438,13 @@
               if(Number.isFinite(significanceStep)&&significanceStep>0)time=range.start+Math.round((time-range.start)/significanceStep)*significanceStep;
               time=Math.max(range.start,Math.min(range.end,time));
             }
-            window.MetricsSignificantMedia.focusTime(time,null,bar);
+            window.MetricsSignificantMedia.focusTime(time,index,bar);
           };
           bar.addEventListener('click',activate);
           bar.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();activate(event);}});
           layer.append(bar);
         }
         svg.append(layer);
-        chart.append(node('p','Fasce verdi: istanti consecutivi con p finale ≤ 0,05, estesi di mezzo passo temporale ai bordi. Clicca una fascia per aprire il frammento video corrispondente.','panel-note'));
       }
       if(categories&&comparisons.length){
         significant.forEach((c,i)=>{
@@ -471,7 +528,8 @@
         const layer=svgEl('g',{class:'moment-markers','aria-label':'Istanti estratti','clip-path':'url(#'+clipId+')'});
         momentMarkers.points.forEach((point,index)=>{
           if (point.peak < xmin || point.peak > xmax || point.value < ymin || point.value > ymax) return;
-          const circle=svgEl('circle',{cx:X(point.peak),cy:Y(point.value),r:8,class:'moment-marker',tabindex:0,role:'button','aria-pressed':'false','aria-label':`${point.label}. Apri il frammento corrispondente.`});
+          const circle=svgEl('g',{class:'moment-marker',tabindex:0,role:'button','aria-pressed':'false','data-preview-index':index,'aria-label':`Anteprima ${index+1} · ${point.label}.`});
+          circle.append(previewBadge(X(point.peak),Y(point.value),index,momentMarkers.points.length));
           circle.append(svgEl('title',{},point.label));
           const activate=event=>{event.stopPropagation();for(const other of layer.children){other.classList.toggle('is-selected',other===circle);other.setAttribute('aria-pressed',String(other===circle));}momentMarkers.onSelect(index,circle);};
           circle.addEventListener('click',activate);
@@ -492,19 +550,20 @@
         chart.append(svg);
       }
       if(target==='chart'&&!categories)document.dispatchEvent(new CustomEvent('metrics-markers-rendered',{detail:{anchors:momentAnchors}}));
+      if(target==='statsGroupPlot'&&!categories)document.dispatchEvent(new CustomEvent('metrics-stat-bands-rendered',{detail:{anchors:statAnchors}}));
       if(hasVideoCursor)window.MetricsVideo?.attach(svg,{min:xmin,max:xmax,left:p.l,top:p.t,width:w-p.l-p.r,height:h-p.t-p.b,showStart:!zoom?.x});
-      if(target==='chart'&&!categories)return;
+      if(target==='chart'||(target==='statsGroupPlot'&&traces.length===1))return;
       const legend=node('div',undefined,'legend');for(const tr of traces){const span=node('span'),dot=node('i');span.dataset.traceSubject=tr.subjectId||'';if(tr.isolationOnly){span.dataset.isolationOnly='true';}dot.style.background=tr.color;span.append(dot,document.createTextNode(tr.name));legend.append(span);}chart.append(legend);
     }
     function redrawSeries(traces) {
-      const options = lastSeriesPlot?.options || {};
+      const options = lastPlots.get('chart')?.options || {};
       $('chart').replaceChildren();
       plot(traces, options);
     }
 
     function reset() {
       momentMarkers = null;
-      lastSeriesPlot = null;
+      lastPlots.clear();
     }
 
     return { plot, markMoments, redrawSeries, clearZoom: () => zoomByPlot.clear(), reset };

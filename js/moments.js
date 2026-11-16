@@ -29,7 +29,7 @@
   }
   if(typeof module==='object'&&module.exports){module.exports={detect};return;}
   const $=id=>document.getElementById(id);
-  const media=root.MetricsSignificantMedia.createViewer({significantMedia:'momentsMedia',significantIntervals:'momentsIntervals',mediaStatus:'momentsMediaStatus',cancelMedia:'momentsCancel'},{floatingOnly:true});
+  const media=root.MetricsSignificantMedia.createViewer({significantMedia:'momentsMedia',significantIntervals:'momentsIntervals',mediaStatus:'momentsMediaStatus',cancelMedia:'momentsCancel'},{floatingOnly:true,dock:$('momentsDock'),anchorEvent:'metrics-markers-rendered',openAllButton:$('openAllMoments')});
   let context=null;
   function clear(){context=null;media.clear();$('extractMoments').disabled=true;$('momentsStatus').textContent='';}
   document.addEventListener('metrics-invalidated',clear);
@@ -53,6 +53,13 @@
       const values=alignment.summary.map(s=>s.mean);
       const ranges=detect(alignment.time,values,{criterion,count,distance:1,before:1,after:1,step:alignment.step});
       const sourceName='Media dei soggetti selezionati',criterionName=$('momentsCriterion').selectedOptions[0].textContent;
+      for (const range of ranges) {
+        const sample = alignment.summary[range.index];
+        range.summary = {
+          time: range.peak,
+          estimates: [{ mean: sample.mean, halfWidth: root.MetricsAnalysis.ci95FromSummary(sample.n, sample.sd) }]
+        };
+      }
       for(const r of ranges)r.label=`${criterionName} · ${r.peak.toFixed(2)} s · valore ${Number(r.value.toPrecision(5))} · clip ${r.start.toFixed(2)}–${r.end.toFixed(2)} s`;
       media.showRanges(ranges,{view:'series',epoch:context.epoch,metric:context.metric,criterion});
       context.markMoments(ranges,{name:sourceName,subjectId:source==='mean'?null:source,x:alignment.time,y:values,color:'#312b79',bold:true},(index,anchor)=>media.openFloating(index,anchor));

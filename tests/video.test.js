@@ -9,6 +9,10 @@ function setup(){
     getAttribute(k){return this.attrs[k];}
     removeAttribute(k){delete this.attrs[k];}
     addEventListener(k,fn){this.handlers[k]=fn;}
+    querySelectorAll(){return [this.dismiss??=new Element()];}
+    querySelector(){return this.confirm??=new Element();}
+    showModal(){this.open=true;}
+    close(){this.open=false;this.handlers.close?.();}
     pause(){this.paused=true;this.handlers.pause?.();}
     load(){this.currentTime=0;}
     getScreenCTM(){return {inverse:()=>({})};}
@@ -18,11 +22,17 @@ function setup(){
   const nodes=new Map(),get=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);},revoked=[],frames=new Map();let n=0;
   const handlers = {};
   const window={addEventListener(){},removeEventListener(){}},env={window,document:{getElementById:get,createElement:()=>new Element(),createElementNS:()=>new Element(),addEventListener:(name,handler)=>{handlers[name]=handler;},removeEventListener:name=>{delete handlers[name];}},URL:{createObjectURL:()=>`blob:${++n}`,revokeObjectURL:url=>revoked.push(url)},requestAnimationFrame:fn=>{frames.set(++n,fn);return n;},cancelAnimationFrame:id=>frames.delete(id)};
-  vm.runInNewContext(fs.readFileSync(require.resolve('../js/video'),'utf8'),env);
+  const sandbox=vm.createContext(env);
+  for (const script of ['settings-dialog','video']) vm.runInContext(fs.readFileSync(require.resolve('../js/'+script),'utf8'),sandbox);
   const api=window.MetricsVideo,video=get('stimulusVideo');
-  function assign(index,name){const input=get('videoAssignments').children[index].children[0].children[0];input.files=[{name}];input.handlers.change();}
+  const dialog=get('videoAssignmentDialog');
+  const open=()=>get('openVideoAssignments').onclick();
+  const confirm=()=>dialog.confirm.onclick();
+  const cancel=()=>dialog.dismiss.onclick();
+  function choose(index,name){const input=get('videoAssignments').children[index].children[0].children[0];input.files=[{name}];input.handlers.change();}
+  function assign(index,name){open();choose(index,name);confirm();}
   function chart(){const svg=new Element();api.attach(svg,{min:5,max:15,left:50,top:20,width:100,height:100});return svg;}
-  return {api,get,video,assign,chart,revoked,frames,handlers};
+  return {api,get,video,assign,choose,open,confirm,cancel,chart,revoked,frames,handlers};
 }
 test('per-epoch video switching, replacement, removal and dataset cleanup',()=>{
   const t=setup();t.api.setContext(['A','B'],'A','series');t.assign(0,'a.mp4');const a=t.video.src;
@@ -30,7 +40,7 @@ test('per-epoch video switching, replacement, removal and dataset cleanup',()=>{
   t.assign(1,'b.webm');assert.equal(t.video.src,a);
   t.api.setContext(['A','B'],'B','series');assert.notEqual(t.video.src,a);assert.equal(t.video.currentTime,0);
   const b=t.video.src;t.assign(1,'b2.mp4');assert.ok(t.revoked.includes(b));
-  const b2=t.video.src;t.get('videoAssignments').children[1].children[2].handlers.click();assert.ok(t.revoked.includes(b2));assert.equal(t.video.hidden,true);
+  const b2=t.video.src;t.open();t.get('videoAssignments').children[1].children[2].handlers.click();t.confirm();assert.ok(t.revoked.includes(b2));assert.equal(t.video.hidden,true);
   t.api.setContext([],'','series');assert.ok(t.revoked.includes(a));assert.equal(t.get('videoAssignments').children.length,0);
 });
 test('playback updates all cursors and only the time axis seeks the video',()=>{
@@ -63,4 +73,15 @@ test('bundled videos replace uploads, switch by epoch and never revoke file URLs
   t.video.currentTime=8;t.api.replaceAssignments(items);assert.equal(t.video.currentTime,0);
   t.assign(1,'replacement.mp4');const replacement=t.video.src;t.api.setContext([],'','series');
   assert.ok(t.revoked.includes(replacement));assert.ok(t.revoked.every(url=>url.startsWith('blob:')));
+});
+
+test('cancel leaves the original video assigned and its URL in use',()=>{
+  const t=setup();t.api.setContext(['A'],'A','series');t.assign(0,'original.mp4');
+  const original=t.video.src;
+  t.open();t.choose(0,'draft.mp4');
+  assert.equal(t.video.src,original);
+  assert.equal(t.api.source('A').name,'original.mp4');
+  t.cancel();
+  assert.equal(t.get('videoAssignments').children[0].children[1].textContent,'original.mp4');
+  assert.equal(t.revoked.length,0);
 });

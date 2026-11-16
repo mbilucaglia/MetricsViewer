@@ -16,6 +16,9 @@ test('demo button loads real records, resets filters, binds local videos and can
     get textContent(){return (this.text||'')+this.children.map(c=>c.textContent||'').join('');}
     set textContent(value){this.text=String(value);}
     setAttribute(){}addEventListener(){}querySelectorAll(){return [];}
+    querySelector(){return this.confirm??=new Element();}
+    showModal(){this.open=true;}
+    close(){this.open=false;}
     get options(){return this.children;}
     get selectedOptions(){return [{textContent:this.value}];}
     click(){this.onclick?.();}
@@ -27,8 +30,9 @@ test('demo button loads real records, resets filters, binds local videos and can
   env.window=env;
   env.Event = Event;
   demo(env);
-  for (const script of ['chart', 'app']) {
-    vm.runInNewContext(fs.readFileSync(require.resolve('../js/' + script), 'utf8'), env);
+  const sandbox=vm.createContext(env);
+  for (const script of ['settings-dialog', 'chart', 'app']) {
+    vm.runInContext(fs.readFileSync(require.resolve('../js/' + script), 'utf8'), sandbox);
   }
   assert.equal(get('workspace').hidden, true);
   assert.equal(get('clear').hidden, true);
@@ -53,6 +57,20 @@ test('demo button loads real records, resets filters, binds local videos and can
   get('normalization').value='zscore';await get('normalization').onchange();
   assert.equal(get('baselineEpochControl').hidden, false);
   assert.ok(invalidations>originalInvalidations);assert.equal(anchors.length,0);
+  get('openTemporalSettings').onclick();
+  get('from').value = '10';
+  get('to').value = '4';
+  const temporal = get('temporalSettingsDialog');
+  temporal.confirm.click();
+  assert.equal(temporal.open, true);
+  assert.match(get('temporalSettingsError').textContent, /intervallo/);
+  assert.equal(ready.o.from, -Infinity);
+  get('to').value = '14';
+  temporal.confirm.click();
+  assert.equal(temporal.open, false);
+  assert.equal(ready.o.from, 10);
+  assert.equal(ready.o.to, 14);
+
   get('files').focus = () => {};
   get('clear').onclick();
   assert.equal(get('workspace').hidden, true);

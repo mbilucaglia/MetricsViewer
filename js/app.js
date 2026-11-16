@@ -5,21 +5,29 @@
   let summaryEpochs=new Set(),knownEpochs=new Set(),revealIndividualTraces=null,restoreIndividualTraces=null,forcedIndividuals=false;
   const node=(tag,text,cls)=>{const n=document.createElement(tag);if(tag==='button')n.type='button';if(tag==='th')n.setAttribute('scope','col');if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
   const fmt=x=>C.finite(x)?Number(x.toPrecision(6)).toString():'—';
-  function number(id,fallback){const v=$(id).value.trim();if(!v)return fallback;const n=Number(v);if(!Number.isFinite(n))throw new Error('Valore numerico non valido.');if(n<0)throw new Error('Tempi e intervalli devono essere non negativi.');return n;}
+  const temporalIds = ['baseFrom','baseTo','madScale','from','to','range','step','interpolation','gap'];
+  const readTemporal = () => Object.fromEntries(temporalIds.map(id => [id, $(id).value]));
+  let temporal = readTemporal();
+  function number(values,id,fallback){const v=values[id].trim();if(!v)return fallback;const n=Number(v);if(!Number.isFinite(n))throw new Error('Valore numerico non valido.');if(n<0)throw new Error('Tempi e intervalli devono essere non negativi.');return n;}
   const allEpochs=()=>[...new Set(dataset.recordings.flatMap(r=>r.epochs.map(e=>e.id)))];
   const allMetrics=()=>[...new Set(dataset.recordings.flatMap(r=>r.epochs.flatMap(e=>Object.keys(e.metrics))))];
   function options(id,values){const previous=$(id).value;$(id).replaceChildren(...values.map(v=>{const o=node('option',v);o.value=v;return o;}));if(values.includes(previous))$(id).value=previous;$(id).disabled=!values.length;}
-  function filterEpochs(){
-    const query=$('summaryEpochSearch').value.toLocaleLowerCase();for(const row of $('epochChecks').children)row.hidden=!row.textContent.toLocaleLowerCase().includes(query);
-    $('epochSelectionCount').textContent=`${summaryEpochs.size} epoche selezionate`;
-  }
-  function epochCheckboxes(){
-    const epochs=dataset?allEpochs():[];summaryEpochs=new Set(epochs.filter(e=>summaryEpochs.has(e)||!knownEpochs.has(e)));knownEpochs=new Set(epochs);
-    $('epochChecks').replaceChildren();for(const epoch of epochs){const label=node('label',undefined,'check-option'),check=node('input');check.type='checkbox';check.checked=summaryEpochs.has(epoch);check.setAttribute('aria-label',`Confronta epoca ${epoch}`);check.onchange=()=>{check.checked?summaryEpochs.add(epoch):summaryEpochs.delete(epoch);filterEpochs();render();};label.append(check,document.createTextNode(epoch));$('epochChecks').append(label);}filterEpochs();
+  function refreshSummaryEpochs() {
+    const epochs = dataset ? allEpochs() : [];
+    summaryEpochs = new Set(epochs.filter(epoch => summaryEpochs.has(epoch) || !knownEpochs.has(epoch)));
+    knownEpochs = new Set(epochs);
+    const select = $('summaryEpochs');
+    select.replaceChildren(...epochs.map(epoch => {
+      const option = node('option', epoch);
+      option.value = epoch;
+      option.selected = summaryEpochs.has(epoch);
+      return option;
+    }));
+    select.disabled = !epochs.length;
   }
   function refresh(){
     options('metric',dataset?allMetrics():[]);options('epoch',dataset?allEpochs():[]);options('baseline',dataset?allEpochs():[]);
-    epochCheckboxes();
+    refreshSummaryEpochs();
     $('subjects').replaceChildren();
     for(const [i,r] of (dataset?.recordings||[]).entries()){
       const row=node('div',undefined,'subject-row'),label=node('label');row.dataset.recordingId=r.id;row.dataset.subject=r.subject;const check=node('input');check.type='checkbox';check.checked=selected.has(r.id);check.setAttribute('aria-label',`Seleziona ${r.subject}`);
@@ -29,7 +37,7 @@
     const hasData = Boolean(dataset);
     $('workspace').hidden = !hasData;
     $('drop').classList.toggle('has-data', hasData);
-    $('clear').hidden = !hasData;
+    $('clear').hidden = $('openVideoAssignments').hidden = !hasData;
     $('fileLabel').textContent = hasData ? 'Aggiungi file JSON' : 'Scegli file JSON';
     $('status').textContent=dataset?`${dataset.recordings.length} soggetti · ${allMetrics().length} metriche · ${allEpochs().length} epoche. I nuovi file vengono aggiunti al dataset.`:'Nessun file caricato.';
     return render();
@@ -58,8 +66,8 @@
     }catch(e){if(ticket===generation)$('errors').textContent=e.message;}
     finally{job.end();}
   }
-  function config(){
-    const o={norm:$('normalization').value,baseline:$('baseline').value,baseFrom:number('baseFrom',-Infinity),baseTo:number('baseTo',Infinity),from:number('from',-Infinity),to:number('to',Infinity),maxGap:number('gap',null),step:number('step',null),scaled:$('madScale').value==='scaled'};
+  function config(values=temporal){
+    const o={norm:$('normalization').value,baseline:$('baseline').value,baseFrom:number(values,'baseFrom',-Infinity),baseTo:number(values,'baseTo',Infinity),from:number(values,'from',-Infinity),to:number(values,'to',Infinity),maxGap:number(values,'gap',null),step:number(values,'step',null),scaled:values.madScale==='scaled'};
     if(o.from>o.to||o.baseFrom>o.baseTo)throw new Error('L’inizio dell’intervallo deve precedere la fine.');
     if(o.step!==null&&o.step<=0||o.maxGap!==null&&o.maxGap<=0)throw new Error('Passo griglia e lacuna massima devono essere positivi.');return o;
   }
@@ -90,6 +98,11 @@
       trace.classList.toggle('is-isolated',emphasized);
     }
   }
+  function setAnalysisError(message) {
+    $('analysisError').textContent = message;
+    $('temporalSettingsError').textContent = message;
+  }
+
   function render(){
     const normalization = $('normalization').value;
     const normalizing = normalization !== 'none' && Boolean(dataset);
@@ -102,16 +115,16 @@
     return MetricsBusy.run('Elaborazione delle metriche in corso…',async job=>{
       await job.step(mode==='series'?'Allineamento delle serie e preparazione dei grafici…':'Calcolo dei riepiloghi temporali e degli outlier…');
       renderNow();
-    }).catch(error=>{$('analysisError').textContent=error.message;});
+    }).catch(error=>setAnalysisError(error.message));
   }
   function renderNow(){
     chart.reset();
     redrawSeriesDisplay = null;
     window.MetricsVideo?.setContext(dataset?allEpochs():[],$('epoch').value,mode);
-    document.dispatchEvent(new CustomEvent('metrics-invalidated',{detail:{mode,dataset}}));
+    document.dispatchEvent(new CustomEvent('metrics-invalidated', { detail: { mode, dataset, selectedIds: [...selected] } }));
     if(forcedIndividuals)$('individuals').checked=false;
     let analysisInput=null;revealIndividualTraces=null;restoreIndividualTraces=null;forcedIndividuals=false;
-    $('analysisError').textContent='';$('chart').replaceChildren();$('warnings').replaceChildren();$('tooltip').hidden=true;exportRows=[];$('export').disabled=true;
+    setAnalysisError('');$('chart').replaceChildren();$('warnings').replaceChildren();$('tooltip').hidden=true;exportRows=[];$('export').disabled=true;
     $('seriesOptions').hidden=mode!=='series';$('seriesTab').classList.toggle('is-active',mode==='series');$('summaryTab').classList.toggle('is-active',mode==='summary');$('seriesTab').setAttribute('aria-pressed',mode==='series');$('summaryTab').setAttribute('aria-pressed',mode==='summary');
     const records=(dataset?.recordings||[]).filter(r=>selected.has(r.id));$('counts').textContent=`${records.length} selezionati su ${dataset?.recordings.length||0}`;
     $('chartTitle').textContent = mode === 'series' ? 'Serie temporali' : 'Riepilogo temporale';
@@ -125,8 +138,8 @@
       if(mode==='series'){
         const items=prepared(records,epoch,metric,o,warnings);if(!items.length)throw new Error('Nessuna serie utilizzabile con queste impostazioni.');
         const alignmentOptions = {
-          range: $('range').value, step: o.step, from: o.from, to: o.to,
-          method: $('interpolation').value, maxGap: o.maxGap
+          range: temporal.range, step: o.step, from: o.from, to: o.to,
+          method: temporal.interpolation, maxGap: o.maxGap
         };
         const aligned = C.align(items.map(x => x.series), alignmentOptions);
         analysisInput = { items, alignment: aligned, alignmentOptions };
@@ -155,7 +168,7 @@
           setVisualIsolation(visualIsolationIds);
         };
         restoreIndividualTraces = revealIndividualTraces = () => chart.redrawSeries(visibleTraces());
-        exportRows=aligned.summary.map((s,i)=>({...provenance,epoch,time:s.time,mean:s.mean,sd:s.sd,ci95_lower:intervals[i] === null ? null : s.mean - intervals[i],ci95_upper:intervals[i] === null ? null : s.mean + intervals[i],n:s.n,grid_step:aligned.step,range:$('range').value,interpolation:$('interpolation').value,max_gap:o.maxGap??'auto:3*native_median_step',downsample_filter:'boxcar',...Object.fromEntries(items.map((x,j)=>[`subject:${x.r.subject}`,aligned.values[j][i]]))}));
+        exportRows=aligned.summary.map((s,i)=>({...provenance,epoch,time:s.time,mean:s.mean,sd:s.sd,ci95_lower:intervals[i] === null ? null : s.mean - intervals[i],ci95_upper:intervals[i] === null ? null : s.mean + intervals[i],n:s.n,grid_step:aligned.step,range:alignmentOptions.range,interpolation:alignmentOptions.method,max_gap:o.maxGap??'auto:3*native_median_step',downsample_filter:'boxcar',...Object.fromEntries(items.map((x,j)=>[`subject:${x.r.subject}`,aligned.values[j][i]]))}));
       }else{
         const epochs=allEpochs().filter(e=>summaryEpochs.has(e)),method=$('aggregation').value,rows=[],stats=[];
         if(!epochs.length)throw new Error('Seleziona almeno un’epoca da confrontare.');
@@ -167,7 +180,7 @@
       }
       $('export').disabled=!exportRows.length;
       document.dispatchEvent(new CustomEvent('metrics-ready',{detail:{mode,dataset,records,metric,epoch,o,analysisInput,exportRows,prepared,plot,render,markMoments,setVisualIsolation}}));
-    }catch(e){$('analysisError').textContent=e.message;}
+    }catch(e){setAnalysisError(e.message);}
     for(const message of [...new Set(warnings)])$('warnings').append(node('p',message));
   }
   function demo(){
@@ -178,8 +191,9 @@
       chart.clearZoom();
       generation++;$('errors').textContent='';dataset=next;selected=new Set(next.recordings.map(r=>r.id));mode='series';
       summaryEpochs.clear();knownEpochs.clear();
-      for(const id of ['from','to','baseFrom','baseTo','step','gap','summaryEpochSearch'])$(id).value='';
+      for(const id of ['from','to','baseFrom','baseTo','step','gap'])$(id).value='';
       $('normalization').value='none';$('range').value='intersection';$('interpolation').value='linear';
+      temporal=readTemporal();
       $('individuals').checked=$('average').checked=true;
       options('metric',allMetrics());$('metric').value='AWI';
       options('epoch',allEpochs());$('epoch').value='stim_arancia_';
@@ -195,10 +209,35 @@
   $('files').onchange=e=>{load(e.target.files);e.target.value='';};$('demo').onclick=demo;$('clear').onclick=()=>{chart.clearZoom();generation++;dataset=null;selected.clear();$('errors').textContent='';refresh();$('files').focus();};
   for(const event of ['dragover','dragenter'])$('drop').addEventListener(event,e=>{e.preventDefault();$('drop').classList.add('is-dragging');});$('drop').ondragleave=()=>$('drop').classList.remove('is-dragging');$('drop').ondrop=e=>{e.preventDefault();$('drop').classList.remove('is-dragging');load(e.dataTransfer.files);};
   $('all').onclick=()=>{selected=new Set((dataset?.recordings||[]).map(r=>r.id));refresh();};$('none').onclick=()=>{selected.clear();refresh();};$('seriesTab').onclick=()=>{mode='series';render();};$('summaryTab').onclick=()=>{mode='summary';render();};
-  for(const id of ['metric' ,'epoch','normalization','baseline','baseFrom','baseTo','madScale','from','to','range','step','interpolation','gap','individuals','average','aggregation'])$(id).onchange=render;
+  for(const id of ['metric' ,'epoch','normalization','baseline','individuals','average','aggregation'])$(id).onchange=render;
   for(const id of ['individuals','average'])$(id).onchange=()=>{if(mode==='series'&&redrawSeriesDisplay){forcedIndividuals=false;redrawSeriesDisplay();}else render();};
-  $('summaryEpochSearch').oninput=filterEpochs;
-  $('epochsAll').onclick=()=>{summaryEpochs=new Set(dataset?allEpochs():[]);epochCheckboxes();render();};
-  $('epochsNone').onclick=()=>{summaryEpochs.clear();epochCheckboxes();render();};
+  let temporalChanged = false;
+  connectMetricsSettings({
+    trigger: $('openTemporalSettings'), dialog: $('temporalSettingsDialog'),
+    begin: () => { $('temporalSettingsError').textContent = ''; },
+    accept: () => {
+      const next = readTemporal();
+      try {
+        for (const id of temporalIds) {
+          if ($(id).validity?.badInput) { $(id).reportValidity(); return false; }
+        }
+        config(next);
+      } catch (error) {
+        $('temporalSettingsError').textContent = error.message;
+        return false;
+      }
+      temporalChanged = temporalIds.some(id => next[id] !== temporal[id]);
+      temporal = next;
+    },
+    discard: () => {
+      for (const id of temporalIds) $(id).value = temporal[id];
+      document.dispatchEvent(new Event('metrics-settings-restored'));
+    },
+    applied: () => { if (temporalChanged) render(); }
+  });
+  $('summaryEpochs').onchange = event => {
+    summaryEpochs = new Set(Array.from(event.target.selectedOptions, option => option.value));
+    return render();
+  };
   refresh();
 })();

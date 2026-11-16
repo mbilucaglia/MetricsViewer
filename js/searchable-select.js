@@ -25,7 +25,16 @@
   const empty = document.createElement('p');
   empty.className = 'panel-note';
   empty.textContent = 'Nessuna opzione trovata.';
-  popup.append(search, list, empty);
+  const actions = document.createElement('div');
+  actions.className = 'searchable-select-actions';
+  const selectAll = document.createElement('button');
+  selectAll.type = 'button';
+  selectAll.textContent = 'Seleziona tutte';
+  const selectNone = document.createElement('button');
+  selectNone.type = 'button';
+  selectNone.textContent = 'Deseleziona tutte';
+  actions.append(selectAll, selectNone);
+  popup.append(search, list, empty, actions);
   document.body.append(popup);
 
   const enhanced = new WeakMap();
@@ -41,6 +50,7 @@
     const { button } = current;
     current = null;
     popup.hidden = true;
+    if (popup.parentElement !== document.body) document.body.append(popup);
     button.setAttribute('aria-expanded', 'false');
     search.setAttribute('aria-expanded', 'false');
     search.removeAttribute('aria-activedescendant');
@@ -63,7 +73,9 @@
     const width = Math.min(Math.max(bounds.width, 210), document.documentElement.clientWidth - edge * 2);
     popup.style.width = width + 'px';
     popup.style.left = Math.max(edge, Math.min(bounds.left, document.documentElement.clientWidth - width - edge)) + 'px';
-    list.style.maxHeight = Math.max(40, Math.min(230, (openAbove ? above : below) - 62)) + 'px';
+    const chromeHeight = popup.offsetHeight - list.offsetHeight;
+    const space = (openAbove ? above : below) - chromeHeight - 5;
+    list.style.maxHeight = Math.max(40, Math.min(230, space)) + 'px';
     const top = openAbove ? bounds.top - 5 - popup.offsetHeight : bounds.bottom + 5;
     popup.style.top = Math.max(edge, top) + 'px';
   }
@@ -80,9 +92,13 @@
     }
   }
 
-  function renderList() {
+  function renderList(keepActive = false) {
     if (!current) return;
     const { select } = current;
+    const previousActive = keepActive ? active : -1;
+    actions.hidden = !select.multiple;
+    if (select.multiple) list.setAttribute('aria-multiselectable', 'true');
+    else list.removeAttribute('aria-multiselectable');
     const query = normalize(search.value.trim());
     choices = [];
     list.replaceChildren();
@@ -92,7 +108,17 @@
       const item = document.createElement('div');
       item.id = 'selectSearchOption' + choices.length;
       item.className = 'searchable-select-option';
-      item.textContent = option.label;
+      if (select.multiple) {
+        const check = document.createElement('span');
+        check.className = 'searchable-select-check';
+        check.setAttribute('aria-hidden', 'true');
+        check.textContent = option.selected ? '✓' : '';
+        const label = document.createElement('span');
+        label.textContent = option.label;
+        item.append(check, label);
+      } else {
+        item.textContent = option.label;
+      }
       item.setAttribute('role', 'option');
       item.setAttribute('aria-selected', String(option.selected));
       if (option.disabled || option.closest('optgroup')?.disabled) {
@@ -101,9 +127,13 @@
       } else {
         item.onmousedown = event => event.preventDefault();
         item.onclick = () => {
-          select.selectedIndex = option.index;
-          close(true);
-          sync(select);
+          if (select.multiple) {
+            option.selected = !option.selected;
+          } else {
+            select.selectedIndex = option.index;
+            close(true);
+            sync(select);
+          }
           select.dispatchEvent(new Event('change', { bubbles: true }));
         };
         choices.push(item);
@@ -111,26 +141,29 @@
       list.append(item);
     }
     empty.hidden = list.children.length > 0;
-    setActive(-1);
     position();
+    setActive(previousActive < choices.length ? previousActive : -1);
   }
 
   function sync(select) {
     const entry = enhanced.get(select);
     if (!entry) return;
     const { button, title } = entry;
-    const selected = select.selectedOptions[0]?.label || 'Seleziona…';
+    const { selectedOptions } = select;
+    const selected = select.multiple && selectedOptions.length > 1
+      ? selectedOptions.length + ' selezionate'
+      : selectedOptions[0]?.label || 'Seleziona…';
     button.textContent = selected + ' ▾';
     button.setAttribute('aria-label', title + ', ' + selected);
     button.disabled = select.matches(':disabled');
     if (current === entry) {
       if (button.disabled) close();
-      else renderList();
+      else renderList(true);
     }
   }
 
   function enhance(select) {
-    if (enhanced.has(select) || select.multiple || select.size > 1) return;
+    if (enhanced.has(select) || (!select.multiple && select.size > 1)) return;
     const labels = Array.from(select.labels || []);
     const title = select.getAttribute('aria-label') || labels.map(label => label.textContent.trim()).join(' ') || 'Seleziona';
     const wrapper = document.createElement('div');
@@ -157,24 +190,34 @@
       }
       close();
       current = entry;
+      const host = button.closest('dialog') || document.body;
+      if (popup.parentElement !== host) host.append(popup);
       popup.setAttribute('aria-label', title);
       popup.hidden = false;
       button.setAttribute('aria-expanded', 'true');
       search.setAttribute('aria-expanded', 'true');
       search.value = '';
+      search.placeholder = select.multiple ? 'Cerca epoche…' : 'Cerca…';
       renderList();
       search.focus({ preventScroll: true });
     };
     sync(select);
   }
 
-  search.addEventListener('input', renderList);
+  function setAllOptions(selected) {
+    const select = current?.select;
+    if (!select?.multiple) return;
+    for (const option of select.options) {
+      if (!option.hidden && !option.matches(':disabled')) option.selected = selected;
+    }
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  selectAll.onclick = () => setAllOptions(true);
+  selectNone.onclick = () => setAllOptions(false);
+  search.addEventListener('input', () => renderList());
   search.addEventListener('keydown', event => {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      event.stopPropagation();
-      close(true);
-    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       const length = choices.length;
       if (!length) return;
@@ -184,7 +227,15 @@
       event.preventDefault();
       const option = active >= 0 ? choices[active] : choices.length === 1 ? choices[0] : null;
       option?.click();
-    } else if (event.key === 'Tab') {
+    }
+  });
+  popup.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      close(true);
+    } else if (event.key === 'Tab' &&
+      (actions.hidden || (event.shiftKey ? event.target === search : event.target === selectNone))) {
       close(true);
     }
   });
@@ -204,7 +255,7 @@
   function syncAll() {
     for (const select of document.querySelectorAll('select')) sync(select);
   }
-  for (const type of ['metrics-ready', 'metrics-invalidated']) {
+  for (const type of ['metrics-ready', 'metrics-invalidated', 'metrics-settings-restored']) {
     document.addEventListener(type, syncAll);
   }
 

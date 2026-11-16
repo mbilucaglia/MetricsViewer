@@ -1,5 +1,19 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
-const {intervals,bands}=require('../js/significant-media');
+const {intervals,bands,rankIntervals}=require('../js/significant-media');
+
+test('numbered statistical previews follow the maximum difference within significant intervals',()=>{
+  const points=[
+    {time:0,pAdjusted:.001,magnitude:2},
+    {time:1,pAdjusted:.04,magnitude:5},
+    {time:2,pAdjusted:.8,magnitude:99},
+    {time:3,pAdjusted:.03,magnitude:8},
+    {time:4,pAdjusted:.01,magnitude:3},
+    {time:6,pAdjusted:.002,magnitude:5}
+  ];
+  const ranges=rankIntervals(intervals(points,1));
+  assert.deepEqual(ranges.map(r=>[r.start,r.peak,r.magnitude,r.minP]),[[3,3,8,.01],[0,1,5,.001],[6,6,5,.002]]);
+  assert.deepEqual(rankIntervals(bands(points,1)).map(r=>r.peak),ranges.map(r=>r.peak));
+});
 test('significant runs split at non-significant samples and missing grid times',()=>{
   const p=(time,pAdjusted)=>({time,pAdjusted});
   const actual=intervals([p(0,.04),p(.5,.01),p(1,.2),p(1.5,.03),p(2.5,.02),p(3,.05)],.5);

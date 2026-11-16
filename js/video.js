@@ -2,8 +2,21 @@
   'use strict';
   const $=id=>document.getElementById(id),video=$('stimulusVideo'),assignments=new Map(),plots=new Map();
   let epoch='',activeUrl=null,time=0,frame=null,series=true;
+  let assignmentEpochs = [], pending = null, changed = false;
   const stop=()=>{if(frame!==null)cancelAnimationFrame(frame);frame=null;};
-  $('openVideoAssignments').addEventListener('click', () => $('videoAssignmentDialog').showModal());
+  connectMetricsSettings({
+    trigger: $('openVideoAssignments'), dialog: $('videoAssignmentDialog'),
+    begin: () => {
+      pending = new Map(assignments);
+      $('videoAssignmentError').textContent = '';
+      rows();
+    },
+    accept: saveAssignments,
+    discard: () => { pending = null; rows(); },
+    applied: () => {
+      if (changed) document.dispatchEvent?.(new CustomEvent('metrics-video-changed'));
+    }
+  });
   function paint(){
     const label = `${time.toFixed(2)} s`;
     $('videoTime').textContent = label;
@@ -48,23 +61,51 @@
     $('videoError').textContent='';$('videoEpoch').textContent=epoch||'Nessuna epoca selezionata';paint();
   }
   function release(id){const old=assignments.get(id);assignments.delete(id);if(old?.objectUrl)URL.revokeObjectURL(old.url);}
-  function rows(epochs){
+  function saveAssignments() {
+    const updates = assignmentEpochs.filter(id => assignments.get(id) !== pending.get(id));
+    const uploaded = new Map();
+    try {
+      for (const id of updates) {
+        const item = pending.get(id);
+        if (item?.file) uploaded.set(id, {
+          url: URL.createObjectURL(item.file), name: item.name, objectUrl: true
+        });
+      }
+    } catch {
+      for (const item of uploaded.values()) URL.revokeObjectURL(item.url);
+      $('videoAssignmentError').textContent = 'Impossibile associare il video. Riprova.';
+      return false;
+    }
+    const replaced = [];
+    for (const id of updates) {
+      const old = assignments.get(id);
+      if (old?.objectUrl) replaced.push(old.url);
+      const item = uploaded.get(id) ?? pending.get(id);
+      if (item) assignments.set(id, item);
+      else assignments.delete(id);
+    }
+    changed = updates.length > 0;
+    pending = null;
+    if (changed) activate();
+    for (const url of replaced) URL.revokeObjectURL(url);
+    rows();
+  }
+  function rows(){
     $('videoAssignments').replaceChildren();
-    for(const id of epochs){
+    for(const id of assignmentEpochs){
       const row=document.createElement('div');row.className='video-assignment';
       const label=document.createElement('label');label.textContent=id;
       const input=document.createElement('input');input.type='file';input.accept='video/*';input.setAttribute('aria-label',`Video per ${id}`);
       input.addEventListener('change',()=>{
-        const file=input.files[0];if(!file)return;
-        const url=URL.createObjectURL(file),old=assignments.get(id);
-        assignments.set(id,{url,name:file.name,objectUrl:true});activate();if(old?.objectUrl)URL.revokeObjectURL(old.url);rows(epochs);document.dispatchEvent?.(new CustomEvent('metrics-video-changed'));
+        const file=input.files[0];if(!file||!pending)return;
+        pending.set(id,{file,name:file.name});rows();
       });
       label.append(input);row.append(label);
-      const item=assignments.get(id);
+      const item=(pending ?? assignments).get(id);
       if(item){
         const name=document.createElement('span');name.textContent=item.name;row.append(name);
         const remove=document.createElement('button');remove.type='button';remove.textContent='Rimuovi';remove.setAttribute('aria-label',`Rimuovi video per ${id}`);
-        remove.addEventListener('click',()=>{const old=assignments.get(id);assignments.delete(id);activate();if(old.objectUrl)URL.revokeObjectURL(old.url);rows(epochs);document.dispatchEvent?.(new CustomEvent('metrics-video-changed'));});row.append(remove);
+        remove.addEventListener('click',()=>{if(pending){pending.delete(id);rows();}});row.append(remove);
       }
       $('videoAssignments').append(row);
     }
@@ -73,7 +114,7 @@
     stop();video.pause();video.removeAttribute('src');video.load();activeUrl=null;time=0;
     for(const id of assignments.keys())release(id);
     for(const item of items)assignments.set(item.epoch,{url:item.url,name:item.name,objectUrl:false});
-    activate();rows(items.map(item=>item.epoch));
+    assignmentEpochs=items.map(item=>item.epoch);activate();rows();
     document.dispatchEvent?.(new CustomEvent('metrics-video-changed'));
   }
   function setContext(epochs,current,mode){
@@ -85,7 +126,7 @@
     // Detach media before releasing the object URL.
     if(stale.includes(epoch)||!epochs.includes(epoch))epoch='';
     activate();for(const id of stale)release(id);
-    rows(epochs);paint();
+    assignmentEpochs=epochs;rows();paint();
   }
   function attach(svg,{min,max,left,top,width,height,showStart=true}){
     function element(tag, attributes) {

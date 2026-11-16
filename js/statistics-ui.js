@@ -3,19 +3,33 @@
   const C=MetricsCore,A=MetricsAnalysis,$=id=>document.getElementById(id);
   const subviews={series:'view',summary:'view'};
   let currentMode='series',context=null,version=0,results=[],resultMeta=null;
-  let groups=[{id:'g1',name:'Gruppo 1'},{id:'g2',name:'Gruppo 2'}],nextGroup=3;
+  const groupSettingsKey = 'metrics-viewer:groups';
+  const savedGroups = loadGroupSettings();
+  let groups = savedGroups?.groups ?? [{id:'g1',name:'Gruppo 1'},{id:'g2',name:'Gruppo 2'}];
+  let nextGroup = savedGroups?.nextGroup ?? 3;
   const isolation=MetricsIsolation.create();let isolationKey=null,isolationDataset=null,latestFlags=new Map();
-  const statsExclusions = new Set();
+  let statsExclusions = new Set();
+  let previousSettings = null;
+  let sampleRecords = [];
+  let sampleSelection = new Set();
   let isolatedOutlierIds = null;
-  const assignments=new Map(),colors=['#514691','#248d92','#c17b40','#b55488','#608a4a'];
+  let assignments=new Map(savedGroups?.assignments);
+  const colors=['#514691','#248d92','#c17b40','#b55488','#608a4a'];
   const el=(tag,text,cls)=>{const e=document.createElement(tag);if(tag==='button')e.type='button';if(tag==='th')e.setAttribute('scope','col');if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
   const fmt=x=>C.finite(x)?Number(x.toPrecision(6)).toString():x===Infinity?'∞':x===-Infinity?'−∞':'—';
   const designs={series:'one',summary:'within'};let designMode='series';
+  const significantOnlyByMode = { series: true, summary: false };
   function syncDesign(){
-    if(designMode!==currentMode){designs[designMode]=$('design').value;designMode=currentMode;$('design').value=designs[currentMode];}
+    if (designMode !== currentMode) {
+      designs[designMode] = $('design').value;
+      designMode = currentMode;
+      $('design').value = designs[currentMode];
+      $('significantOnly').checked = significantOnlyByMode[currentMode];
+    }
     const within=$('design').querySelector('[value="within"]');within.hidden=currentMode!=='summary';within.disabled=currentMode!=='summary';
   }
   function methodDescription(){
+    if (previousSettings) return;
     const within=$('design').value==='within',summary=currentMode==='summary';
     $('statsMethod').textContent=within?'Confronto entro soggetto sulle epoche selezionate: con 2 epoche, t appaiato a due code (prima meno seconda); con 3 o più, F a misure ripetute con permutazione delle epoche entro ciascun soggetto e post-hoc t appaiati su tutte le coppie, corretti max-|T| tramite cambi di segno congiunti per soggetto. Si usano gli stessi soggetti completi per omnibus e post-hoc. Gli IC delle barre descrivono le medie delle epoche, non le differenze appaiate.':summary?'Test per ciascuna epoca contro un valore nullo o tra gruppi indipendenti. Correzione max-|T| / max-F su tutte le epoche selezionate; soggetti con dati completi. Per i gruppi indipendenti: post-hoc a permutazioni tra tutte le coppie, corretti max-|T| congiunto su coppie × epoche. Per confrontare le epoche tra loro scegli il disegno entro soggetto.':'Test di permutazione: t contro un valore nullo o F tra gruppi indipendenti. Correzione max-|T| / max-F su tutti gli istanti analizzati; stessi soggetti a ogni istante.';
   }
@@ -27,7 +41,7 @@
     syncDesign();
     $('modeNavigation').setAttribute('aria-labelledby', currentMode === 'series' ? 'seriesTab' : 'summaryTab');
     $('seriesModeControls').hidden = currentMode !== 'series';
-    $('summaryModeControls').hidden = currentMode !== 'summary';
+    $('summaryModeControls').hidden = $('aggregationControl').hidden = currentMode !== 'summary';
     for (const [view, [tabId, panelId]] of Object.entries(panels)) {
       const active = subviews[currentMode] === view;
       $(panelId).hidden = !active;
@@ -36,15 +50,122 @@
     }
     $('statsTitle').textContent = `Analisi statistiche · ${currentMode === 'series' ? 'Serie temporali' : 'Riepilogo temporale'}`;
   }
+  const statsDetails = $('statsDetails');
+  const showStatsDetails = $('showStatsDetails');
+  statsDetails.addEventListener('toggle', () => {
+    showStatsDetails.setAttribute('aria-expanded', String(statsDetails.open));
+  });
+  showStatsDetails.onclick = () => {
+    if (!results.length) return;
+    statsDetails.open = true;
+    statsDetails.querySelector('summary').focus({ preventScroll: true });
+    statsDetails.scrollIntoView({ block: 'start' });
+  };
   function clearResults(message='Impostazioni aggiornate: esegui nuovamente l’analisi.'){
     globalThis.MetricsSignificantMedia?.clear();
-    version++;results=[];resultMeta=null;$('statsResults').replaceChildren();$('statsGroupPlot').replaceChildren();$('statsPPlot').replaceChildren();$('exportStats').disabled=true;$('cancelStats').disabled=true;$('runStats').disabled=!context;$('statsStatus').textContent=message;
+    statsDetails.open = false;
+    showStatsDetails.disabled = true;
+    version++;results=[];resultMeta=null;$('statsResults').replaceChildren();$('statsGroupPlot').replaceChildren();$('statsPPlot').replaceChildren();$('exportStats').disabled=true;$('runStats').disabled=!context;$('statsStatus').textContent=message;
   }
-  function groupEditor(){
+  function loadGroupSettings() {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(groupSettingsKey));
+      if (saved?.groups?.length >= 2 && Array.isArray(saved.groups) &&
+        saved.groups.every(group => typeof group?.id === 'string' && typeof group.name === 'string') &&
+        Number.isSafeInteger(saved.nextGroup) && Array.isArray(saved.assignments) &&
+        saved.assignments.every(pair => Array.isArray(pair) && pair.length === 2)) return saved;
+    } catch { /* Assignments still work in memory if session storage is unavailable. */ }
+    return null;
+  }
+
+  function saveGroupSettings() {
+    if (previousSettings) return;
+    try {
+      sessionStorage.setItem(groupSettingsKey, JSON.stringify({groups,nextGroup,assignments:[...assignments]}));
+    } catch { /* Keep the current in-memory assignments. */ }
+  }
+
+  function updateStatsOptionsSummary() {
+    if (previousSettings) return;
+    const design = $('design').value;
+    const type = {one:'Un campione',within:'Confronto tra epoche',multi:'Gruppi indipendenti'}[design];
+    const permutations = Number($('permutations').value).toLocaleString('it-IT');
+    const parts = [type, design === 'one' ? `Valore nullo ${$('nullValue').value}` : null,
+      `${permutations} permutazioni`, `Seed ${$('seed').value}`];
+    $('statsOptionsSummary').textContent = parts.filter(Boolean).join(' · ');
+  }
+
+  function groupFor(recordId) {
+    return assignments.get(recordId) ?? groups[0].id;
+  }
+
+  function groupSelect(record) {
+    const select = el('select');
+    select.setAttribute('aria-label', `Gruppo di ${record.subject}`);
+    for (const group of groups) {
+      const option = el('option', group.name);
+      option.value = group.id;
+      select.append(option);
+    }
+    select.value = groupFor(record.id);
+    select.onchange = () => {
+      assignGroup(record.id, select.value);
+      if (!previousSettings) { saveGroupSettings(); clearResults(); }
+    };
+    return select;
+  }
+
+  function assignGroup(recordId, groupId) {
+    if (groupId === groups[0].id) assignments.delete(recordId);
+    else assignments.set(recordId, groupId);
+  }
+
+  function groupSettingsChanged() {
+    if (!previousSettings) { saveGroupSettings(); clearResults(); }
+    groupEditor();
+    updateStatsSample();
+  }
+
+  function groupEditor() {
     methodDescription();
-    $('groupEditor').hidden=$('design').value!=='multi';$('nullValue').disabled=$('design').value!=='one';$('groupNames').replaceChildren();$('assignments').replaceChildren();
-    for(const g of groups){const row=el('div',undefined,'group-name'),input=el('input');input.value=g.name;input.setAttribute('aria-label',`Nomina ${g.name}`);input.onchange=()=>{g.name=input.value.trim()||g.id;clearResults();groupEditor();};row.append(input);if(groups.length>2){const remove=el('button','×');remove.setAttribute('aria-label',`Rimuovi gruppo ${g.name}`);remove.onclick=()=>{groups=groups.filter(x=>x.id!==g.id);for(const[id,v]of assignments)if(v===g.id)assignments.set(id,groups[0].id);clearResults();groupEditor();};row.append(remove);}$('groupNames').append(row);}
-    for(const r of (context?.records||[]).filter(record => !statsExclusions.has(record.id))){if(!assignments.has(r.id))assignments.set(r.id,groups[0].id);const label=el('label',r.subject,'group-assignment'),select=el('select');select.setAttribute('aria-label',`Gruppo di ${r.subject}`);for(const g of groups){const option=el('option',g.name);option.value=g.id;select.append(option);}select.value=assignments.get(r.id);select.onchange=()=>{assignments.set(r.id,select.value);clearResults();};label.append(select);$('assignments').append(label);}
+    updateStatsOptionsSummary();
+    const design = $('design').value;
+    $('groupEditor').hidden = design !== 'multi';
+    $('nullValue').disabled = design !== 'one';
+    $('groupNames').replaceChildren();
+    if (design !== 'multi') return;
+    for (const group of groups) {
+      const row = el('div', undefined, 'group-name');
+      const label = el('label', 'Nome del gruppo');
+      const input = el('input');
+      input.value = group.name;
+      input.onchange = () => {
+        group.name = input.value.trim() || group.name;
+        input.value = group.name;
+        for (const option of $('statsSampleList').querySelectorAll('option')) {
+          if (option.value === group.id) option.textContent = group.name;
+        }
+        for (const button of $('statsGroupQuickButtons').children) {
+          if (button.dataset.group === group.id) button.textContent = group.name;
+        }
+        if (!previousSettings) { saveGroupSettings(); clearResults(); }
+      };
+      label.append(input);
+      row.append(label);
+      if (groups.length > 2) {
+        const remove = el('button', '×');
+        remove.setAttribute('aria-label', `Rimuovi gruppo ${group.name}`);
+        remove.onclick = () => {
+          groups = groups.filter(item => item.id !== group.id);
+          for (const [id, assigned] of assignments) {
+            if (assigned === group.id) assignments.delete(id);
+          }
+          groupSettingsChanged();
+        };
+        row.append(remove);
+      }
+      $('groupNames').append(row);
+    }
   }
   function table(target,headers,rows){const t=el('table'),h=el('thead'),tr=el('tr');headers.forEach(x=>tr.append(el('th',x)));h.append(tr);t.append(h);const body=el('tbody');for(const row of rows.slice(0,1000)){const tr=el('tr');row.forEach(x=>tr.append(el('td',x)));body.append(tr);}t.append(body);$(target).append(t);if(rows.length>1000)$(target).append(el('p','Anteprima limitata a 1.000 righe; il CSV contiene tutti i risultati.','panel-note'));}
   function flagLabel(flag){return flag?.status==='flagged'?(flag.flaggedEpochs?`Sì (${flag.flaggedEpochs.length})`:'Sì'):flag?.status==='within'?'No':flag?.status==='disabled'?'Off':'N/D';}
@@ -112,51 +233,108 @@
   });
 
   function visibleOutliersToExclude() {
-    if (!context || isolation.target?.type !== 'outliers') return [];
+    if (!context || !isolatedOutlierIds) return [];
     return Array.from($('subjects').children)
-      .filter(row => !row.hidden && !statsExclusions.has(row.dataset.recordingId))
+      .filter(row => !row.hidden && isolatedOutlierIds.has(row.dataset.recordingId) &&
+        !statsExclusions.has(row.dataset.recordingId))
       .map(row => row.dataset.recordingId);
   }
 
   function updateVisibleOutlierAction() {
+    if (previousSettings) return;
     const button = $('excludeVisibleOutliers');
     const count = visibleOutliersToExclude().length;
-    button.hidden = !context || isolation.target?.type !== 'outliers';
+    button.hidden = !context || !isolatedOutlierIds;
     button.disabled = count === 0;
-    button.textContent = count ? `Escludi dai test (${count})` : 'Outlier esclusi dai test';
+    button.textContent = count ? `Escludi dai test (${count})` : 'Escludi dai test';
   }
+  const sampleSearch = $('statsSampleSearch');
+  sampleSearch.addEventListener('input', () => {
+    updateStatsSample();
+    $('statsSampleList').scrollTop = 0;
+  });
+
   function updateStatsSample() {
     const list = $('statsSampleList');
-    const records = context?.dataset.recordings ?? [];
-    const selected = new Set(context?.records.map(record => record.id));
-    const canExclude = record => selected.has(record.id) &&
-      latestFlags.get(record.id)?.status === 'flagged' && !statsExclusions.has(record.id);
-
-    $('statsExcludedCount').textContent = statsExclusions.size ? '· ' + statsExclusions.size + ' esclusi' : '';
-    $('excludeFlagged').disabled = !records.some(canExclude);
+    const hasGroups = $('design').value === 'multi';
+    list.classList.toggle('has-groups', hasGroups);
+    const excludedCount = sampleRecords.filter(record =>
+      !sampleSelection.has(record.id) || statsExclusions.has(record.id)).length;
+    $('statsExcludedCount').textContent = excludedCount ? '· ' + excludedCount + ' esclusi' : '';
     $('includeAllStats').disabled = !statsExclusions.size;
 
-    list.replaceChildren(...records.map((record, index) => {
-      const label = el('label', undefined, 'check-option');
+    const terms = sampleSearch.value.split(',')
+      .map(term => normalizeSubject(term.trim()))
+      .filter(Boolean);
+    const textTerms = [];
+    const ranges = [];
+    for (const term of terms) {
+      const match = /^(\d+)(?:\s*[-–]\s*(\d+))?$/.exec(term);
+      if (!match) {
+        textTerms.push(term);
+        continue;
+      }
+      const first = BigInt(match[1]);
+      const last = BigInt(match[2] ?? match[1]);
+      ranges.push(first <= last ? [first, last] : [last, first]);
+    }
+
+    const isFiltered = terms.length > 0;
+    const visible = isFiltered ? sampleRecords.filter(({subject, id}) => {
+      const name = normalizeSubject(subject);
+      const recordingId = normalizeSubject(id);
+      if (textTerms.some(term => name.includes(term) || recordingId.includes(term))) return true;
+      if (!ranges.length) return false;
+      const numbers = (name + ' ' + recordingId).match(/\d+/g) ?? [];
+      return numbers.some(digits => {
+        const number = BigInt(digits);
+        return ranges.some(([first, last]) => number >= first && number <= last);
+      });
+    }) : sampleRecords;
+    $('statsSampleEmpty').hidden = !isFiltered || visible.length > 0;
+    const canAssign = hasGroups && isFiltered && visible.length > 0;
+    $('statsGroupQuickAssign').hidden = !canAssign;
+    const quickButtons = $('statsGroupQuickButtons');
+    $('statsGroupQuickLabel').textContent = visible.length === 1
+      ? 'Assegna il soggetto trovato a' : 'Assegna i ' + visible.length + ' soggetti trovati a';
+    quickButtons.replaceChildren(...(canAssign ? groups.map(group => {
+      const button = el('button', group.name);
+      button.dataset.group = group.id;
+      button.onclick = () => {
+        for (const record of visible) assignGroup(record.id, group.id);
+        if (!previousSettings) { saveGroupSettings(); clearResults(); }
+        updateStatsSample();
+        [...quickButtons.children].find(item => item.dataset.group === group.id)?.focus();
+      };
+      return button;
+    }) : []));
+
+    list.replaceChildren(...visible.map((record, index) => {
+      const unselected = !sampleSelection.has(record.id);
+      const flagged = context && latestFlags.get(record.id)?.status === 'flagged';
+      const label = el('label', undefined, flagged ? 'check-option outlier-flagged' : 'check-option');
       const checkbox = el('input');
       checkbox.type = 'checkbox';
-      checkbox.checked = statsExclusions.has(record.id);
-      const flag = latestFlags.get(record.id)?.status === 'flagged' ? ' · Outlier' : '';
-      const unselected = selected.has(record.id) ? '' : ' · Deselezionato nei soggetti';
+      checkbox.checked = unselected || statsExclusions.has(record.id);
+      checkbox.disabled = unselected;
+      const flag = flagged ? ' · Outlier' : '';
+      const selection = unselected ? ' · Deselezionato in Soggetti' : '';
       checkbox.onchange = () => {
         if (checkbox.checked) statsExclusions.add(record.id);
         else statsExclusions.delete(record.id);
         statsSampleChanged();
-        list.querySelectorAll('input')[index]?.focus();
+        list.querySelectorAll('input[type="checkbox"]')[index]?.focus();
       };
-      label.append(checkbox, el('span', record.subject + flag + unselected));
-      return label;
+      label.append(checkbox, el('span', record.subject + flag + selection));
+      if (!hasGroups) return label;
+      const row = el('div', undefined, 'stats-sample-row');
+      row.append(label, groupSelect(record));
+      return row;
     }));
   }
 
   function statsSampleChanged() {
-    clearResults('Campione aggiornato. Esegui l’analisi per applicare le esclusioni.');
-    groupEditor();
+    if (!previousSettings) clearResults('Campione aggiornato. Esegui l’analisi per applicare le esclusioni.');
     updateStatsSample();
     updateVisibleOutlierAction();
   }
@@ -170,13 +348,6 @@
       ? '1 outlier escluso dai test.'
       : `${ids.length} outlier esclusi dai test.`;
     $('isolateOutliers').focus();
-  };
-
-  $('excludeFlagged').onclick = () => {
-    for (const record of context?.records ?? []) {
-      if (latestFlags.get(record.id)?.status === 'flagged') statsExclusions.add(record.id);
-    }
-    statsSampleChanged();
   };
 
   $('includeAllStats').onclick = () => {
@@ -215,7 +386,9 @@
   }
   document.addEventListener('metrics-invalidated',e=>{currentMode=e.detail?.mode||currentMode;context=null;
     if ('dataset' in (e.detail || {})) {
-      const loaded = new Set(e.detail.dataset?.recordings.map(record => record.id));
+      sampleRecords = e.detail.dataset?.recordings ?? [];
+      sampleSelection = new Set(e.detail.selectedIds);
+      const loaded = new Set(sampleRecords.map(record => record.id));
       for (const id of statsExclusions) if (!loaded.has(id)) statsExclusions.delete(id);
     }
     updateStatsSample();
@@ -226,18 +399,19 @@
     if ('dataset' in (e.detail || {}) && !e.detail.dataset) subjectSearch.value = '';
     isolatedOutlierIds = null;
     filterSubjects();
-    $('restoreIsolation').hidden=true;$('isolationStatus').textContent='';for(const button of $('subjects').querySelectorAll('.trace-isolate-button'))button.disabled=true;clearResults('Seleziona dati utilizzabili nella visualizzazione.');$('statsTarget').textContent='Seleziona dati utilizzabili nella visualizzazione.';for(const badge of $('subjects').querySelectorAll('.outlier-badge'))badge.remove();
+    $('restoreIsolation').hidden=true;$('isolationStatus').textContent='';for(const button of $('subjects').querySelectorAll('.trace-isolate-button'))button.disabled=true;clearResults('Seleziona dati utilizzabili nella visualizzazione.');for(const badge of $('subjects').querySelectorAll('.outlier-badge'))badge.remove();
     for (const row of $('subjects').children) {
       row.classList.remove('is-highlighted');
     }
     subview();
   });
   document.addEventListener('metrics-ready',e=>{
-    context=e.detail;currentMode=context.mode;const key=JSON.stringify([context.mode,context.metric,context.mode==='series'?context.epoch:null,context.o,$('aggregation').value,context.dataset.recordings.map(r=>r.id),context.analysisInput.epochs,$('range').value,$('interpolation').value]);if(key!==isolationKey||isolationDataset!==context.dataset){isolation.reset();isolationKey=key;isolationDataset=context.dataset;}subview();groupEditor();updateOutliers(context);$('runStats').disabled=false;
-    const targets=context.mode==='series'?context.epoch:context.analysisInput.epochs.join(', ');
-    $('statsTarget').textContent=`${context.metric} · ${targets} · ${context.records.length} soggetti selezionati · ${$('normalization').selectedOptions[0].textContent}${context.mode==='summary'?' · '+$('aggregation').selectedOptions[0].textContent:''}`;
+    context=e.detail;currentMode=context.mode;
+    sampleRecords = context.dataset.recordings;
+    sampleSelection = new Set(context.records.map(record => record.id));
+    const key=JSON.stringify([context.mode,context.metric,context.mode==='series'?context.epoch:null,context.o,$('aggregation').value,context.dataset.recordings.map(r=>r.id),context.analysisInput.epochs,context.analysisInput.alignmentOptions?.range,context.analysisInput.alignmentOptions?.method]);if(key!==isolationKey||isolationDataset!==context.dataset){isolation.reset();isolationKey=key;isolationDataset=context.dataset;}subview();groupEditor();updateOutliers(context);$('runStats').disabled=false;
     methodDescription();
-    $('statsStatus').textContent = 'Imposta il disegno del test ed esegui l’analisi.';
+    $('statsStatus').textContent = '';
   });
   for (const [view, [tabId]] of Object.entries(panels)) {
     $(tabId).onclick = () => {
@@ -254,22 +428,57 @@
   function dismissIsolation(){if(!context||!isolation.target)return;isolation.reset();updateIsolationControls(context);}
   document.addEventListener('click',e=>{
     if (isolation.target?.type !== 'subject') return;
-    if(e.target?.closest?.('.trace-isolate-button, #isolateOutliers, #restoreIsolation, .chart-panner, .chart-zoom-tools, #chart [role="button"]'))return;
+    if(e.target?.closest?.('.trace-isolate-button, #isolateOutliers, #restoreIsolation, .chart-panner, .chart-zoom-tools, #chart [role="button"], dialog, [aria-haspopup="dialog"]'))return;
     dismissIsolation();
   });
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')dismissIsolation();});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!document.querySelector?.('dialog[open]'))dismissIsolation();});
   $('restoreIsolation').onclick=()=>{isolation.reset();if(context)updateIsolationControls(context);};
   function refreshOutlierFeedback(){if(!context)return;const ctx=context;return MetricsBusy.run('Ricerca degli outlier in corso…',async()=>{if(context===ctx)updateOutliers(ctx);}).catch(error=>{$('outlierContext').textContent=error.message;});}
   $('outlierSeries').onchange=refreshOutlierFeedback;$('outlierSummary').onchange=refreshOutlierFeedback;
-  $('design').onchange=()=>{clearResults();groupEditor();};for(const id of ['nullValue','permutations','seed'])$(id).onchange=()=>clearResults();
-  $('addGroup').onclick=()=>{groups.push({id:`g${nextGroup}`,name:`Gruppo ${nextGroup++}`});clearResults();groupEditor();};
-  $('cancelStats').onclick=()=>clearResults('Analisi annullata.');
+  const statsSettingsIds = ['design', 'nullValue', 'permutations', 'seed'];
+  const readStatsSettings = () => ({
+    values: statsSettingsIds.map(id => $(id).value),
+    groups: groups.map(group => ({...group})), nextGroup,
+    assignments: [...assignments], exclusions: [...statsExclusions]
+  });
+  connectMetricsSettings({
+    trigger: $('openStatsSettings'), dialog: $('statsSettingsDialog'),
+    begin: () => { previousSettings = readStatsSettings(); },
+    accept: () => {
+      if (statsSettingsIds.some(id => $(id).reportValidity?.() === false)) return false;
+      const next = readStatsSettings();
+      const changed = JSON.stringify(previousSettings) !== JSON.stringify(next);
+      previousSettings = null;
+      if (changed) { saveGroupSettings(); clearResults(); }
+      groupEditor();
+      updateStatsSample();
+      updateVisibleOutlierAction();
+    },
+    discard: () => {
+      const saved = previousSettings;
+      previousSettings = null;
+      statsSettingsIds.forEach((id, index) => { $(id).value = saved.values[index]; });
+      groups = saved.groups;
+      nextGroup = saved.nextGroup;
+      assignments = new Map(saved.assignments);
+      statsExclusions = new Set(saved.exclusions);
+      groupEditor();
+      updateStatsSample();
+      if (document.dispatchEvent) document.dispatchEvent(new Event('metrics-settings-restored'));
+    }
+  });
+  $('design').onchange=()=>{if (!previousSettings) clearResults();groupEditor();updateStatsSample();};
+  $('addGroup').onclick=()=>{groups.push({id:`g${nextGroup}`,name:`Gruppo ${nextGroup++}`});groupSettingsChanged();};
   function displayResults(){
+    showStatsDetails.disabled = !results.length;
     $('statsResults').replaceChildren();const visible=$('significantOnly').checked?results.filter(r=>Number.isFinite(r.pAdjusted)&&r.pAdjusted<=.05):results;
     table('statsResults',[currentMode==='series'?'Tempo [s]':'Epoca / confronto','Test','Statistica','Differenza media A − B','p non corretto','p finale','Correzione','N'],visible.map(r=>[r.label,r.test||($('design').value==='one'?'t':'F'),fmt(r.statistic),fmt(r.meanDifference),fmt(r.pUncorrected),fmt(r.pAdjusted),r.correction||resultMeta?.correction||'',r.n]));
     if(!visible.length)$('statsResults').append(el('p','Nessun risultato con il filtro selezionato.','panel-note'));
   }
-  $('significantOnly').onchange=displayResults;
+  $('significantOnly').onchange = () => {
+    significantOnlyByMode[currentMode] = $('significantOnly').checked;
+    displayResults();
+  };
   $('runStats').onclick=async()=>{
     if(!context)return;const ctx=context;clearResults('Preparazione dei test…');const ticket=version,design=$('design').value,permutations=Number($('permutations').value),nullValue=Number($('nullValue').value),seed=Number($('seed').value);
     const job=MetricsBusy.start('Preparazione dell’analisi statistica…',{onCancel:()=>clearResults('Analisi annullata.')});
@@ -293,9 +502,9 @@
       }
       if(matrix.subjects.length<2)throw new Error('Servono almeno 2 soggetti con dati completi.');
       if(matrix.times.length*matrix.subjects.length*permutations>300000000)throw new Error('Analisi troppo estesa: riduci permutazioni, intervallo o risoluzione temporale.');
-      const subjects=matrix.subjects.map(s=>({...s,groupIndex:groups.findIndex(g=>g.id===assignments.get(s.id))}));
+      const subjects=matrix.subjects.map(s=>({...s,groupIndex:groups.findIndex(g=>g.id===groupFor(s.id))}));
       if(design==='multi'&&groups.some((_,i)=>subjects.filter(s=>s.groupIndex===i).length<2))throw new Error('Assegna almeno 2 soggetti utilizzabili a ciascun gruppo.');
-      $('runStats').disabled=true;$('cancelStats').disabled=false;
+      $('runStats').disabled=true;
       const within=design==='within';
       if(within&&ctx.mode!=='summary')throw new Error('Il confronto tra epoche è disponibile nel riepilogo temporale.');
       const progress=(done,total,phase='Permutazioni')=>{if(version===ticket){$('statsStatus').textContent=`${phase}: ${done.toLocaleString('it-IT')} / ${total.toLocaleString('it-IT')}…`;job.update(`${phase} in corso…`,{value:done,max:total});}};
@@ -308,19 +517,39 @@
       if(ticket!==version)return;
       await job.step('Preparazione dei risultati statistici…');if(ticket!==version)return;
       const labels=ctx.mode==='summary'?ctx.analysisInput.epochs:matrix.times.map(fmt);
+      const summaryGroups=design!=='multi'?[{name:'Campione statistico',subjects}]:groups.map((g,i)=>({name:g.name,subjects:subjects.filter(s=>s.groupIndex===i)}));
+      const traces=summaryGroups.map((g,i)=>{const columns=matrix.times.map((_,j)=>g.subjects.map(s=>s.values[j]));return {name:`${g.name} (N=${g.subjects.length}) · IC 95%`,color:colors[i%colors.length],bold:true,x:matrix.times,y:columns.map(C.mean),band:columns.map(A.ci95)};});
+      if(ctx.mode==='series'){
+        points=points.map((point,index)=>{
+          const means=traces.map(trace=>trace.y[index]);
+          const magnitude=design==='one'?Math.abs(means[0]-nullValue):Math.max(...means)-Math.min(...means);
+          return {...point,magnitude};
+        });
+      }
       results=points.map((p,i)=>({...p,label:within?p.label:labels[i],n:subjects.length}));
       posthoc=posthoc.map(p=>({...p,epochA:labels[p.epochIndex],epochB:labels[p.epochIndex],label:`${labels[p.epochIndex]} · ${p.groupA} − ${p.groupB}`}));
       results.push(...posthoc);
-      resultMeta={view:ctx.mode,metric:ctx.metric,epoch:ctx.mode==='series'?ctx.epoch:'',aggregation:ctx.mode==='summary'?$('aggregation').value:'',normalization:ctx.o.norm,baseline:ctx.o.norm==='none'?'':ctx.o.baseline,baseline_from:Number.isFinite(ctx.o.baseFrom)?ctx.o.baseFrom:'',baseline_to:Number.isFinite(ctx.o.baseTo)?ctx.o.baseTo:'',mad_scale:ctx.o.scaled?1.4826:1,analysis_from:Number.isFinite(ctx.o.from)?ctx.o.from:'',analysis_to:Number.isFinite(ctx.o.to)?ctx.o.to:'',design,null_value:within?'':nullValue,permutations,seed,correction:within?'max-|T| (post-hoc only)':design==='one'?'max-abs-T':'max-F',family:within?'all epoch pairs for selected metric':ctx.mode==='series'?'all tested times':'all tested epochs',included_subjects:subjects.map(s=>s.subject).join('; '),manually_excluded_subjects:manuallyExcluded.map(r=>r.subject).join('; '),excluded_subjects:ctx.records.filter(r=>!subjects.some(s=>s.id===r.id)).map(r=>r.subject).join('; '),group_assignments:design==='multi'?subjects.map(s=>`${s.subject}:${groups[s.groupIndex].name}`).join('; '):'',grid_step:ctx.mode==='series'?testAlignment.step:'',max_gap:ctx.o.maxGap??'auto:3*native_median_step',interpolation:ctx.mode==='series'?$('interpolation').value:'',outlier_method:$(ctx.mode==='series'?'outlierSeries':'outlierSummary').value};
-      const summaryGroups=design!=='multi'?[{name:'Campione statistico',subjects}]:groups.map((g,i)=>({name:g.name,subjects:subjects.filter(s=>s.groupIndex===i)}));
-      const traces=summaryGroups.map((g,i)=>{const columns=matrix.times.map((_,j)=>g.subjects.map(s=>s.values[j]));return {name:`${g.name} (N=${g.subjects.length}) · IC 95%`,color:colors[i%colors.length],bold:true,x:matrix.times,y:columns.map(C.mean),band:columns.map(A.ci95)};});
+      resultMeta={view:ctx.mode,metric:ctx.metric,epoch:ctx.mode==='series'?ctx.epoch:'',aggregation:ctx.mode==='summary'?$('aggregation').value:'',normalization:ctx.o.norm,baseline:ctx.o.norm==='none'?'':ctx.o.baseline,baseline_from:Number.isFinite(ctx.o.baseFrom)?ctx.o.baseFrom:'',baseline_to:Number.isFinite(ctx.o.baseTo)?ctx.o.baseTo:'',mad_scale:ctx.o.scaled?1.4826:1,analysis_from:Number.isFinite(ctx.o.from)?ctx.o.from:'',analysis_to:Number.isFinite(ctx.o.to)?ctx.o.to:'',design,null_value:within?'':nullValue,permutations,seed,correction:within?'max-|T| (post-hoc only)':design==='one'?'max-abs-T':'max-F',family:within?'all epoch pairs for selected metric':ctx.mode==='series'?'all tested times':'all tested epochs',included_subjects:subjects.map(s=>s.subject).join('; '),manually_excluded_subjects:manuallyExcluded.map(r=>r.subject).join('; '),excluded_subjects:ctx.records.filter(r=>!subjects.some(s=>s.id===r.id)).map(r=>r.subject).join('; '),group_assignments:design==='multi'?subjects.map(s=>`${s.subject}:${groups[s.groupIndex].name}`).join('; '):'',grid_step:ctx.mode==='series'?testAlignment.step:'',max_gap:ctx.o.maxGap??'auto:3*native_median_step',interpolation:ctx.mode==='series'?(ctx.analysisInput.alignmentOptions?.method ?? ''):'',outlier_method:$(ctx.mode==='series'?'outlierSeries':'outlierSummary').value};
       const categories=ctx.mode==='summary'?labels:null;
       ctx.plot(traces,{target:'statsGroupPlot',significancePoints:categories?[]:points,significanceStep:testAlignment?.step,title:'Medie dei gruppi e intervalli di confidenza al 95%',categories,bars:!!categories,comparisons:within?repeated.comparisons:design==='multi'?posthoc:points.map((p,i)=>({...p,epochA:labels[i],epochB:labels[i],single:true,label:`${labels[i]} contro ${nullValue}`,correction:'max-|T| sulle epoche'})),xLabel:categories?'Epoca / stimolo':'Tempo [s]'});
-      displayResults();globalThis.MetricsSignificantMedia?.show(results,resultMeta);$('exportStats').disabled=false;
-      const omitted=ctx.mode==='series'?`${matrix.dropped} istanti incompleti omessi.`:`Soggetti incompleti esclusi: ${matrix.excluded.join(', ')||'nessuno'}.`;
-      $('statsStatus').textContent=`Completato: ${points.filter(p=>p.pAdjusted<=.05).length}/${points.length} risultati con p finale ≤ 0,05. N=${subjects.length}. ${omitted} ${posthoc.length?`${posthoc.filter(p=>p.pAdjusted<=.05).length}/${posthoc.length} post-hoc tra gruppi significativi (max-|T| congiunto su coppie × epoche).`:''} ${within?(repeated.omnibus?'Il p omnibus non richiede correzione; i post-hoc sono corretti max-|T| su tutte le coppie, anche se l’omnibus non è significativo.':'Un solo confronto appaiato: nessuna correzione multipla necessaria.'):''} Esclusi dal campione: ${manuallyExcluded.map(r => r.subject).join(', ') || 'nessuno'}.`;
+      displayResults();
+      globalThis.MetricsSignificantMedia?.show(results, resultMeta, index => {
+        const point = points[index];
+        const estimates = traces.map((trace, groupIndex) => {
+          const difference = design === 'one' && nullValue !== 0;
+          return {
+            label: design === 'multi' ? summaryGroups[groupIndex].name + ' · Media'
+              : difference ? 'ΔM vs ' + fmt(nullValue) : 'Media',
+            mean: trace.y[index] - (difference ? nullValue : 0),
+            halfWidth: trace.band[index]
+          };
+        });
+        return { time: point.time, estimates, pAdjusted: point.pAdjusted, omnibus: design === 'multi' };
+      });
+      $('exportStats').disabled = false;
+      $('statsStatus').textContent = '';
     }catch(e){if(ticket===version)$('statsStatus').textContent=e.message;}
-    finally{job.end();if(ticket===version){$('runStats').disabled=!context;$('cancelStats').disabled=true;}}
+    finally{job.end();if(ticket===version)$('runStats').disabled=!context;}
   };
   $('exportStats').onclick=()=>{
     if(!results.length)return;return MetricsBusy.run('Preparazione del CSV delle analisi…',async()=>{const rows=results.map(r=>({...resultMeta,target:r.label,family:r.groupA?'all group pairs × selected epochs':resultMeta.family,test:r.test||(resultMeta.design==='one'?'t':'F omnibus'),epoch_a:r.epochA||'',epoch_b:r.epochB||'',mean_difference:r.meanDifference??'',df1:r.df1??'',df2:r.df2??'',group_a:r.groupA||'',group_b:r.groupB||'',n_a:r.nA??'',n_b:r.nB??'',statistic:r.statistic,p_uncorrected:r.pUncorrected,p_adjusted:r.pAdjusted,correction:r.correction||resultMeta.correction,n:r.n})),headers=Object.keys(rows[0]);
