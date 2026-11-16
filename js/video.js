@@ -3,16 +3,18 @@
   const $=id=>document.getElementById(id),video=$('stimulusVideo'),assignments=new Map(),plots=new Map();
   let epoch='',activeUrl=null,time=0,frame=null,series=true;
   let assignmentEpochs = [], pending = null, changed = false;
+  const videosToRemove = new Set();
   const stop=()=>{if(frame!==null)cancelAnimationFrame(frame);frame=null;};
   connectMetricsSettings({
     trigger: $('openVideoAssignments'), dialog: $('videoAssignmentDialog'),
     begin: () => {
       pending = new Map(assignments);
+      videosToRemove.clear();
       $('videoAssignmentError').textContent = '';
       rows();
     },
     accept: saveAssignments,
-    discard: () => { pending = null; rows(); },
+    discard: () => { pending = null; videosToRemove.clear(); rows(); },
     applied: () => {
       if (changed) document.dispatchEvent?.(new CustomEvent('metrics-video-changed'));
     }
@@ -62,11 +64,12 @@
   }
   function release(id){const old=assignments.get(id);assignments.delete(id);if(old?.objectUrl)URL.revokeObjectURL(old.url);}
   function saveAssignments() {
-    const updates = assignmentEpochs.filter(id => assignments.get(id) !== pending.get(id));
+    const nextItem = id => videosToRemove.has(id) ? undefined : pending.get(id);
+    const updates = assignmentEpochs.filter(id => assignments.get(id) !== nextItem(id));
     const uploaded = new Map();
     try {
       for (const id of updates) {
-        const item = pending.get(id);
+        const item = nextItem(id);
         if (item?.file) uploaded.set(id, {
           url: URL.createObjectURL(item.file), name: item.name, objectUrl: true
         });
@@ -80,12 +83,13 @@
     for (const id of updates) {
       const old = assignments.get(id);
       if (old?.objectUrl) replaced.push(old.url);
-      const item = uploaded.get(id) ?? pending.get(id);
+      const item = uploaded.get(id) ?? nextItem(id);
       if (item) assignments.set(id, item);
       else assignments.delete(id);
     }
     changed = updates.length > 0;
     pending = null;
+    videosToRemove.clear();
     if (changed) activate();
     for (const url of replaced) URL.revokeObjectURL(url);
     rows();
@@ -98,14 +102,25 @@
       const input=document.createElement('input');input.type='file';input.accept='video/*';input.setAttribute('aria-label',`Video per ${id}`);
       input.addEventListener('change',()=>{
         const file=input.files[0];if(!file||!pending)return;
+        videosToRemove.delete(id);
         pending.set(id,{file,name:file.name});rows();
       });
       label.append(input);row.append(label);
       const item=(pending ?? assignments).get(id);
       if(item){
         const name=document.createElement('span');name.textContent=item.name;row.append(name);
-        const remove=document.createElement('button');remove.type='button';remove.textContent='Rimuovi';remove.setAttribute('aria-label',`Rimuovi video per ${id}`);
-        remove.addEventListener('click',()=>{if(pending){pending.delete(id);rows();}});row.append(remove);
+        const choice = document.createElement('label');
+        choice.className = 'video-removal-choice';
+        const select = document.createElement('input');
+        select.type = 'checkbox';
+        select.checked = videosToRemove.has(id);
+        select.setAttribute('aria-label', 'Seleziona il video per ' + id);
+        select.onchange = () => {
+          if (select.checked) videosToRemove.add(id);
+          else videosToRemove.delete(id);
+        };
+        choice.append(select, document.createTextNode('Seleziona per rimuovere'));
+        row.append(choice);
       }
       $('videoAssignments').append(row);
     }

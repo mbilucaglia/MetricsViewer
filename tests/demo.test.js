@@ -40,7 +40,7 @@ test('demo button loads real records, resets filters, binds local videos and can
   await get('demo').onclick();
   assert.equal(get('workspace').hidden, false);
   assert.equal(get('baselineEpochControl').hidden, true);
-  assert.equal(get('fileLabel').textContent, 'Aggiungi file JSON');
+  assert.equal(get('fileLabel').textContent, 'Aggiungi file');
   assert.equal(get('errors').textContent,'');assert.equal(ready.dataset.recordings.length,35);assert.equal(ready.records.length,35);assert.equal(ready.metric,'AWI');assert.equal(ready.epoch,'stim_arancia_');
   assert.equal(get('normalization').value,'none');assert.equal(get('from').value,'');assert.equal(get('gap').value,'');assert.equal(viewClicks,1);
   assert.equal(get('baseline').value,'baseline');assert.equal(bindings.find(v=>v.epoch==='baseline').url,'file:///C:/Metrics%20Viewer/video_demo_baseline.mp4');assert.equal(bindings.length,3);assert.equal(bindings[0].url,'file:///C:/Metrics%20Viewer/video_demo_stim_arancia.mp4');
@@ -74,7 +74,7 @@ test('demo button loads real records, resets filters, binds local videos and can
   get('files').focus = () => {};
   get('clear').onclick();
   assert.equal(get('workspace').hidden, true);
-  assert.equal(get('fileLabel').textContent, 'Scegli file JSON');
+  assert.equal(get('fileLabel').textContent, 'Scegli file');
 
 });
 

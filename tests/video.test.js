@@ -21,7 +21,7 @@ function setup(){
   }
   const nodes=new Map(),get=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);},revoked=[],frames=new Map();let n=0;
   const handlers = {};
-  const window={addEventListener(){},removeEventListener(){}},env={window,document:{getElementById:get,createElement:()=>new Element(),createElementNS:()=>new Element(),addEventListener:(name,handler)=>{handlers[name]=handler;},removeEventListener:name=>{delete handlers[name];}},URL:{createObjectURL:()=>`blob:${++n}`,revokeObjectURL:url=>revoked.push(url)},requestAnimationFrame:fn=>{frames.set(++n,fn);return n;},cancelAnimationFrame:id=>frames.delete(id)};
+  const window={addEventListener(){},removeEventListener(){}},env={window,document:{getElementById:get,createElement:()=>new Element(),createTextNode:text=>({textContent:text}),createElementNS:()=>new Element(),addEventListener:(name,handler)=>{handlers[name]=handler;},removeEventListener:name=>{delete handlers[name];}},URL:{createObjectURL:()=>`blob:${++n}`,revokeObjectURL:url=>revoked.push(url)},requestAnimationFrame:fn=>{frames.set(++n,fn);return n;},cancelAnimationFrame:id=>frames.delete(id)};
   const sandbox=vm.createContext(env);
   for (const script of ['settings-dialog','video']) vm.runInContext(fs.readFileSync(require.resolve('../js/'+script),'utf8'),sandbox);
   const api=window.MetricsVideo,video=get('stimulusVideo');
@@ -40,7 +40,7 @@ test('per-epoch video switching, replacement, removal and dataset cleanup',()=>{
   t.assign(1,'b.webm');assert.equal(t.video.src,a);
   t.api.setContext(['A','B'],'B','series');assert.notEqual(t.video.src,a);assert.equal(t.video.currentTime,0);
   const b=t.video.src;t.assign(1,'b2.mp4');assert.ok(t.revoked.includes(b));
-  const b2=t.video.src;t.open();t.get('videoAssignments').children[1].children[2].handlers.click();t.confirm();assert.ok(t.revoked.includes(b2));assert.equal(t.video.hidden,true);
+  const b2=t.video.src;t.open();const selected=t.get('videoAssignments').children[1].children[2].children[0];selected.checked=true;selected.onchange();t.confirm();assert.ok(t.revoked.includes(b2));assert.equal(t.video.hidden,true);
   t.api.setContext([],'','series');assert.ok(t.revoked.includes(a));assert.equal(t.get('videoAssignments').children.length,0);
 });
 test('playback updates all cursors and only the time axis seeks the video',()=>{

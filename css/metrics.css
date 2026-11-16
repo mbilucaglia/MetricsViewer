@@ -2090,6 +2090,7 @@ padding: 70px 20px;
   padding: 0;
 }
 
+#importedFilesDialog,
 #videoAssignmentDialog,
 #statsSettingsDialog,
 #temporalSettingsDialog {
@@ -2103,6 +2104,7 @@ padding: 70px 20px;
   overflow: hidden;
 }
 
+#importedFilesDialog::backdrop,
 #videoAssignmentDialog::backdrop,
 #statsSettingsDialog::backdrop,
 #temporalSettingsDialog::backdrop {
@@ -2163,7 +2165,27 @@ padding: 70px 20px;
 }
 
 .settings-dialog-actions [data-confirm]:hover { filter: brightness(.9); }
+#importedFilesError:empty,
 #videoAssignmentError:empty { display: none; }
+
+#importedFilesList {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+#importedFilesList .check-option {
+  justify-content: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.video-assignment label.video-removal-choice {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: normal;
+}
 
 .stats-sample-search { margin-block: 10px; }
 .stats-group-quick-assign { margin-block: 8px; }

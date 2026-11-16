@@ -33,7 +33,43 @@
     }
     return data;
   }
-  function merge(datasets) { return validate({schema_version:1, time_unit:'s', recordings:datasets.flatMap(d=>validate(d).recordings)}); }
+  function merge(datasets, {idsBySubject} = {}) {
+    const subjects = new Map();
+    for (const input of datasets) {
+      for (const recording of validate(input).recordings) {
+        if (!subjects.has(recording.subject)) {
+          subjects.set(recording.subject, { recording, epochs: new Map() });
+        }
+        const { epochs } = subjects.get(recording.subject);
+        for (const epoch of recording.epochs) {
+          if (!epochs.has(epoch.id)) {
+            epochs.set(epoch.id, { ...epoch, metrics: Object.create(null) });
+          }
+          const { metrics } = epochs.get(epoch.id);
+          for (const [name, series] of Object.entries(epoch.metrics)) {
+            const previous = metrics[name];
+            if (!previous?.time.length) {
+              metrics[name] = series;
+            } else if (series.time.length) {
+              const identical = series.time.length === previous.time.length &&
+                series.time.every((time, index) =>
+                  time === previous.time[index] && series.values[index] === previous.values[index]);
+              assert(identical, `Serie in conflitto per ${recording.subject} / ${epoch.id} / ${name}.`);
+            }
+          }
+        }
+      }
+    }
+    return validate({
+      schema_version: 1,
+      time_unit: 's',
+      recordings: Array.from(subjects.values(), ({ recording, epochs }) => ({
+        ...recording,
+        id: idsBySubject?.get(recording.subject) ?? recording.id,
+        epochs: Array.from(epochs.values())
+      }))
+    });
+  }
   function cadence(s) { return median(s.time.slice(1).map((t,i)=>t-s.time[i])); }
   function gapLimit(s, limit) { return finite(limit) && limit > 0 ? limit : (cadence(s) || 0) * 3; }
   function within(s, from=-Infinity, to=Infinity) { return s.values.filter((v,i)=>finite(v) && s.time[i]>=from && s.time[i]<=to); }

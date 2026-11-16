@@ -2,6 +2,7 @@
   'use strict';
   const C=MetricsCore,$=id=>document.getElementById(id),palette=['#514691','#248d92','#c17b40','#b55488','#608a4a','#537bc3','#986240','#877fa4'];
   let dataset=null,selected=new Set(),mode='series',exportRows=[],generation=0;
+  let importedFiles = [];
   let summaryEpochs=new Set(),knownEpochs=new Set(),revealIndividualTraces=null,restoreIndividualTraces=null,forcedIndividuals=false;
   const node=(tag,text,cls)=>{const n=document.createElement(tag);if(tag==='button')n.type='button';if(tag==='th')n.setAttribute('scope','col');if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
   const fmt=x=>C.finite(x)?Number(x.toPrecision(6)).toString():'—';
@@ -25,6 +26,76 @@
     }));
     select.disabled = !epochs.length;
   }
+  function mergeSources(sources) {
+    const inputs = sources.map(source => source.data).filter(data => data.recordings.length);
+    const idsBySubject = new Map(dataset?.recordings.map(recording => [recording.subject, recording.id]));
+    return inputs.length ? C.merge(inputs, {idsBySubject}) : null;
+  }
+
+  function updateSources(sources, next) {
+    const existing = new Set(dataset?.recordings.map(recording => recording.id));
+    selected = new Set((next?.recordings ?? [])
+      .filter(recording => !existing.has(recording.id) || selected.has(recording.id))
+      .map(recording => recording.id));
+    importedFiles = sources;
+    dataset = next;
+  }
+
+  function removeSubject(recording) {
+    const remaining = importedFiles.map(source => ({
+      ...source,
+      data: { ...source.data, recordings: source.data.recordings.filter(item => item.subject !== recording.subject) }
+    }));
+    updateSources(remaining, mergeSources(remaining));
+    refresh();
+  }
+
+  const importedFilesDialog = $('importedFilesDialog');
+  const confirmFileRemoval = importedFilesDialog.querySelector('[data-confirm]');
+  const filesToRemove = new Set();
+  function resetFileRemoval() {
+    filesToRemove.clear();
+    $('importedFilesList').replaceChildren();
+  }
+  connectMetricsSettings({
+    trigger: $('openImportedFiles'), dialog: importedFilesDialog,
+    begin: () => {
+      confirmFileRemoval.disabled = true;
+      $('importedFilesError').textContent = '';
+      $('importedFilesList').replaceChildren(...importedFiles.map(source => {
+        const label = node('label', undefined, 'check-option');
+        const checkbox = node('input');
+        checkbox.type = 'checkbox';
+        checkbox.onchange = () => {
+          if (checkbox.checked) filesToRemove.add(source);
+          else filesToRemove.delete(source);
+          confirmFileRemoval.disabled = !filesToRemove.size;
+        };
+        label.append(checkbox, node('span', source.name));
+        return label;
+      }));
+    },
+    accept: () => {
+      if (!filesToRemove.size) return false;
+      try {
+        const remaining = importedFiles.filter(source => !filesToRemove.has(source));
+        updateSources(remaining, mergeSources(remaining));
+        generation++;
+        $('errors').textContent = '';
+      } catch (error) {
+        $('importedFilesError').textContent = error.message;
+        return false;
+      }
+    },
+    discard: resetFileRemoval,
+    applied: () => {
+      resetFileRemoval();
+      if (!importedFiles.length) chart.clearZoom();
+      refresh();
+      if (!importedFiles.length) $('files').focus();
+    }
+  });
+
   function refresh(){
     options('metric',dataset?allMetrics():[]);options('epoch',dataset?allEpochs():[]);options('baseline',dataset?allEpochs():[]);
     refreshSummaryEpochs();
@@ -32,13 +103,16 @@
     for(const [i,r] of (dataset?.recordings||[]).entries()){
       const row=node('div',undefined,'subject-row'),label=node('label');row.dataset.recordingId=r.id;row.dataset.subject=r.subject;const check=node('input');check.type='checkbox';check.checked=selected.has(r.id);check.setAttribute('aria-label',`Seleziona ${r.subject}`);
       check.onchange=()=>{check.checked?selected.add(r.id):selected.delete(r.id);render();};
-      const text=node('span',r.subject);text.style.color=palette[i%palette.length];label.append(check,text);const remove=node('button','×');remove.title=`Rimuovi ${r.subject}`;remove.setAttribute('aria-label',remove.title);remove.onclick=()=>{dataset.recordings=dataset.recordings.filter(x=>x.id!==r.id);selected.delete(r.id);if(!dataset.recordings.length)dataset=null;refresh();};row.append(label,remove);$('subjects').append(row);
+      const text=node('span',r.subject);text.style.color=palette[i%palette.length];label.append(check,text);const remove=node('button','×');remove.title=`Rimuovi ${r.subject}`;remove.setAttribute('aria-label',remove.title);remove.onclick=()=>removeSubject(r);row.append(label,remove);$('subjects').append(row);
     }
     const hasData = Boolean(dataset);
     $('workspace').hidden = !hasData;
     $('drop').classList.toggle('has-data', hasData);
-    $('clear').hidden = $('openVideoAssignments').hidden = !hasData;
-    $('fileLabel').textContent = hasData ? 'Aggiungi file JSON' : 'Scegli file JSON';
+    $('clear').hidden = !importedFiles.length;
+    $('openVideoAssignments').hidden = !hasData;
+    $('openImportedFiles').hidden = !importedFiles.length;
+    $('openImportedFiles').textContent = 'File caricati (' + importedFiles.length + ')';
+    $('fileLabel').textContent = hasData ? 'Aggiungi file' : 'Scegli file';
     $('status').textContent=dataset?`${dataset.recordings.length} soggetti · ${allMetrics().length} metriche · ${allEpochs().length} epoche. I nuovi file vengono aggiunti al dataset.`:'Nessun file caricato.';
     return render();
   }
@@ -51,18 +125,26 @@
       for(const [index,file]of list.entries()){
         await job.step(`Lettura metriche in corso: ${file.name}`,{value:index,max:list.length});
         if(ticket!==generation)return;
-        if(!file.name.toLowerCase().endsWith('.json'))throw new Error(`${file.name}: scegliere un file JSON.`);
-        const text=await file.text();
-        await job.step(`Verifica delle metriche: ${file.name}`,{value:index,max:list.length});
-        if(ticket!==generation)return;
-        try{inputs.push(C.validate(JSON.parse(text)));}catch(e){throw new Error(`${file.name}: ${e.message}`);}
+        try {
+          const extension = /\.(json|xlsx)$/i.exec(file.name)?.[1].toLowerCase();
+          if (!extension) throw new Error('Scegli un file JSON o XLSX.');
+          const contents = extension === 'xlsx' ? await file.arrayBuffer() : await file.text();
+          await job.step(`Verifica delle metriche: ${file.name}`, {value:index,max:list.length});
+          if (ticket !== generation) return;
+          const input = extension === 'xlsx' ? MetricsLegacyXlsx.read(contents) : JSON.parse(contents);
+          inputs.push({ name: file.name, data: C.validate(input) });
+        } catch (error) {
+          throw new Error(`${file.name}: ${error.message}`);
+        }
       }
       await job.step('Preparazione dei soggetti e delle epoche…',{value:list.length,max:list.length});
       if(ticket!==generation)return;
-      const merged=C.merge(dataset?[dataset,...inputs]:inputs);
+      const sources = [...importedFiles, ...inputs];
+      const merged = mergeSources(sources);
       await job.step('Preparazione dei grafici e degli outlier…');
       if(ticket!==generation)return;
-      for(const d of inputs)for(const r of d.recordings)selected.add(r.id);dataset=merged;await refresh();
+      updateSources(sources, merged);
+      await refresh();
     }catch(e){if(ticket===generation)$('errors').textContent=e.message;}
     finally{job.end();}
   }
@@ -189,7 +271,7 @@
       const videos=Object.entries(next.demo_info.videos).map(([epoch,item])=>({epoch,name:item.file,url:new URL(item.file,document.baseURI).href}));
       document.dispatchEvent(new Event('metrics-dataset-replaced'));
       chart.clearZoom();
-      generation++;$('errors').textContent='';dataset=next;selected=new Set(next.recordings.map(r=>r.id));mode='series';
+      generation++;$('errors').textContent='';importedFiles=[{name:'Esempio integrato · metrics_demo_2_stimoli.json',data:next}];dataset=next;selected=new Set(next.recordings.map(r=>r.id));mode='series';
       summaryEpochs.clear();knownEpochs.clear();
       for(const id of ['from','to','baseFrom','baseTo','step','gap'])$(id).value='';
       $('normalization').value='none';$('range').value='intersection';$('interpolation').value='linear';
@@ -206,7 +288,7 @@
   }
   function csvCell(v){let s=v===null||v===undefined?'':String(v);if(typeof v==='string'&&/^[=+@\-\t\r]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';}
   $('export').onclick=()=>{if(!exportRows.length)return;return MetricsBusy.run('Preparazione del file CSV…',async()=>{const headers=[...new Set(exportRows.flatMap(Object.keys))],csv='\uFEFF'+[headers,...exportRows.map(r=>headers.map(k=>r[k]))].map(r=>r.map(csvCell).join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),a=node('a');a.href=url;a.download=`metrics-${mode}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}).catch(error=>{$('errors').textContent=error.message;});};
-  $('files').onchange=e=>{load(e.target.files);e.target.value='';};$('demo').onclick=demo;$('clear').onclick=()=>{chart.clearZoom();generation++;dataset=null;selected.clear();$('errors').textContent='';refresh();$('files').focus();};
+  $('files').onchange=e=>{load(e.target.files);e.target.value='';};$('demo').onclick=demo;$('clear').onclick=()=>{chart.clearZoom();generation++;dataset=null;importedFiles=[];selected.clear();$('errors').textContent='';refresh();$('files').focus();};
   for(const event of ['dragover','dragenter'])$('drop').addEventListener(event,e=>{e.preventDefault();$('drop').classList.add('is-dragging');});$('drop').ondragleave=()=>$('drop').classList.remove('is-dragging');$('drop').ondrop=e=>{e.preventDefault();$('drop').classList.remove('is-dragging');load(e.dataTransfer.files);};
   $('all').onclick=()=>{selected=new Set((dataset?.recordings||[]).map(r=>r.id));refresh();};$('none').onclick=()=>{selected.clear();refresh();};$('seriesTab').onclick=()=>{mode='series';render();};$('summaryTab').onclick=()=>{mode='summary';render();};
   for(const id of ['metric' ,'epoch','normalization','baseline','individuals','average','aggregation'])$(id).onchange=render;

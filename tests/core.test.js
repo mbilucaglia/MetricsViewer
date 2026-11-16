@@ -48,9 +48,33 @@ test('no overlap and excessively large grids fail clearly',()=>{
 });
 test('schema rejects mismatched, duplicate or nonnumeric data',()=>{
   const d={schema_version:1,time_unit:'s',recordings:[{id:'a',subject:'a',epochs:[{id:'task',metrics:{AWI:s([0,1],[2,null])}}]}]};
-  assert.equal(C.validate(d),d);assert.throws(()=>C.merge([d,d]));
+  assert.equal(C.validate(d),d);
+  assert.throws(()=>C.validate({...d,recordings:[d.recordings[0],d.recordings[0]]}),/duplicata/);
   const bad=structuredClone(d);bad.recordings[0].epochs[0].metrics.AWI.time=[0,0];assert.throws(()=>C.validate(bad));
   const bad2=structuredClone(d);bad2.recordings[0].epochs[0].metrics.AWI.values=[2,'3'];assert.throws(()=>C.validate(bad2));
+});
+
+test('merges subjects and epochs across files while preserving the first recording ID', () => {
+  const dataset = (id, epochs, subject = 'S1') => ({
+    schema_version: 1, time_unit: 's', recordings: [{id, subject, epochs}]
+  });
+  const awi = s([0, 1], [2, null]);
+  const first = dataset('original', [{id:'task', metrics:{AWI:awi, WL:s([],[])}}]);
+  const second = dataset('new-id', [
+    {id:'task', metrics:{AWI:structuredClone(awi), WL:s([0],[4])}},
+    {id:'baseline', metrics:{AWI:s([0],[1])}}
+  ]);
+  const joined = C.merge([first, second]);
+  assert.equal(joined.recordings.length, 1);
+  assert.equal(joined.recordings[0].id, 'original');
+  assert.deepEqual(joined.recordings[0].epochs.map(epoch=>epoch.id), ['task','baseline']);
+  assert.deepEqual(joined.recordings[0].epochs[0].metrics.WL.values, [4]);
+  assert.deepEqual(first.recordings[0].epochs[0].metrics.WL.values, []);
+
+  const conflict = dataset('new-id', [{id:'task', metrics:{AWI:s([0,1],[5,null])}}]);
+  assert.throws(() => C.merge([first, conflict]), /conflitto per S1 \/ task \/ AWI/);
+  const duplicateID = dataset('original', [{id:'task', metrics:{AWI:awi}}], 'S2');
+  assert.throws(() => C.merge([first, duplicateID]), /Registrazione duplicata/);
 });
 
 test('all epochs share subject-specific baseline statistics and preserve native timestamps',()=>{

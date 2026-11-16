@@ -34,6 +34,12 @@ exportMetricsJSON(cell_out, "group.json", Interactive=true); % tutti i soggetti 
 
 Richiede MATLAB R2021a o successivo, senza toolbox aggiuntivi. Verificato con R2025b.
 
+## Importazione XLSX legacy
+
+**Scegli file** e il trascinamento accettano JSON e XLSX anche nella stessa importazione. Nei file XLSX legacy, ogni foglio dati si chiama `Metrica @ Epoca`. La prima riga contiene i nomi dei soggetti e una colonna `Time [s]`; il viewer usa i tempi originali e tratta le celle vuote come valori mancanti. Il file `EEG_TimeSeries_demo_sintetico_2_stimoli.xlsx` è un esempio di questo formato.
+
+La lettura avviene nel browser, anche offline, con [SheetJS CE 0.20.3](https://docs.sheetjs.com/docs/getting-started/installation/standalone/) incluso in `js/vendor/`. La licenza Apache 2.0 è in [LICENSE.sheetjs.txt](js/vendor/LICENSE.sheetjs.txt).
+
 ## Formato JSON v1
 
 ```json
@@ -65,7 +71,7 @@ Richiede MATLAB R2021a o successivo, senza toolbox aggiuntivi. Verificato con R2
 ```
 
 - `recordings`, `epochs`, `time` e `values` sono sempre array, anche con un solo elemento.
-- Ogni `id` di registrazione e ogni `subject` sono unici nel dataset importato. Ogni epoca ha un ID unico all'interno della registrazione. Più file vengono aggiunti in modo atomico: un errore non modifica il dataset esistente. Duplicati rifiutati, non sovrascritti.
+- Quando importi più file, anche in momenti diversi, il viewer unisce i soggetti con lo stesso nome esatto (`subject`) e le epoche con lo stesso ID. Mantiene l’ID di registrazione del primo file per ciascun soggetto. Integra le metriche mancanti e ignora le copie identiche. Se la stessa serie contiene tempi o valori discordanti, l’intera importazione si ferma e il dataset già caricato resta disponibile.
 - `time` contiene secondi dall'inizio dell'epoca, finiti, non negativi e strettamente crescenti. Non deve necessariamente contenere un campione a zero: il primo campione non viene spostato.
 - `time` e `values` hanno la stessa lunghezza. Sono consentite serie vuote, metrica/epoca assente in un soggetto e durate/passaggi temporali differenti.
 - `values` ammette numeri finiti e `null`. L'esportatore converte NaN/Inf in `null`, mantenendo i tempi e le posizioni; i tempi non finiti sono rifiutati.
@@ -171,7 +177,7 @@ L’esportatore parte dalla versione fornita dall’utente: usa `jsonencode` e m
 
 ## Avanzamento delle operazioni
 
-Un popup modale indica le fasi di lettura e verifica dei JSON, preparazione dei grafici, ricerca outlier ed esportazione CSV. Le elaborazioni di dataset grandi (almeno 20.000 campioni della metrica o 100 registrazioni) mostrano anche le fasi di normalizzazione e allineamento. Il browser riceve tempo per disegnare il popup prima dei calcoli. I passaggi sincroni più costosi possono comunque occupare il thread principale; non viene mostrata una percentuale inventata.
+Un popup modale indica le fasi di lettura e verifica dei file JSON e XLSX, preparazione dei grafici, ricerca outlier ed esportazione CSV. Le elaborazioni di dataset grandi (almeno 20.000 campioni della metrica o 100 registrazioni) mostrano anche le fasi di normalizzazione e allineamento. Il browser riceve tempo per disegnare il popup prima dei calcoli. I passaggi sincroni più costosi possono comunque occupare il thread principale; non viene mostrata una percentuale inventata.
 
 Nei test statistici l’avanzamento mostra il numero effettivo di permutazioni completate. Il pulsante Annulla analisi (o Escape) interrompe il test al successivo blocco di permutazioni. Il popup si chiude anche in caso di errore e riporta il focus al controllo precedente.
 
