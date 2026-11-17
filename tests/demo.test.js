@@ -46,6 +46,13 @@ test('demo button loads real records, resets filters, binds local videos and can
   assert.equal(get('baseline').value,'baseline');assert.equal(bindings.find(v=>v.epoch==='baseline').url,'file:///C:/Metrics%20Viewer/video_demo_baseline.mp4');assert.equal(bindings.length,3);assert.equal(bindings[0].url,'file:///C:/Metrics%20Viewer/video_demo_stim_arancia.mp4');
   get('subjects').children[0].children[1].onclick();assert.equal(ready.dataset.recordings.length,34);
   await get('demo').onclick();assert.equal(ready.dataset.recordings.length,35);
+  const [firstRecord, secondRecord] = ready.records;
+  const subjectWithOtherStimuli = {...firstRecord, epochs: firstRecord.epochs.filter(epoch => epoch.id !== ready.epoch)};
+  const expectedMissingWarnings = [];
+  const available = ready.prepared([subjectWithOtherStimuli, secondRecord], ready.epoch, ready.metric, ready.o, expectedMissingWarnings);
+  assert.equal(available.length, 1);
+  assert.equal(available[0].r.id, secondRecord.id);
+  assert.equal(expectedMissingWarnings.length, 0);
   const originalContext=ready,originalInvalidations=invalidations,aligned=ready.analysisInput.alignment;
   ready.markMoments([{peak:aligned.time[0],value:aligned.summary[0].mean,label:'Maximum'}],{name:'Mean',x:aligned.time,y:aligned.summary.map(s=>s.mean),color:'#000'},()=>{});
   assert.equal(anchors.length,1);

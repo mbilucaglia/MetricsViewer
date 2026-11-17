@@ -112,3 +112,19 @@ test('joint group max-T agrees with exhaustive label assignments across pairs an
   const result=await P.runPairwise({subjects:values.map((v,i)=>({values:v,groupIndex:Math.floor(i/2)})),times:[0,1],groupNames:['A','B','C'],permutations:9999,seed:127});
   result.forEach((r,i)=>{assert.ok(Math.abs(r.pUncorrected-raw[i]/total)<.025);assert.ok(Math.abs(r.pAdjusted-adjusted[i]/total)<.025);});
 });
+
+
+test('independent stimulus matrix uses the observed stimulus and preserves zero values', () => {
+  const records = ['CN1', 'CN2', 'JN1', 'JN2', 'missing'].map(id => ({id, subject:id}));
+  const epochs = ['Charlotte', 'Jhonatan'];
+  const rows = records.slice(0, 4).map((record, i) => ({
+    subject:record.subject, epoch:epochs[i < 2 ? 0 : 1], value:i
+  }));
+  const matrix = A.independentStimuliMatrix(records, epochs, rows);
+  assert.equal(matrix.subjects.length, 4);
+  assert.deepEqual(matrix.subjects.map(subject => subject.values), [[0],[1],[2],[3]]);
+  assert.deepEqual(matrix.subjects.map(subject => subject.groupIndex), [0,0,1,1]);
+  assert.deepEqual(matrix.subjects.map(subject => subject.sourceEpoch), ['Charlotte','Charlotte','Jhonatan','Jhonatan']);
+  assert.throws(() => A.independentStimuliMatrix(records, epochs, [...rows, {subject:'CN1',epoch:'Jhonatan',value:2}]), /un solo stimolo per soggetto/);
+  assert.throws(() => A.independentStimuliMatrix(records, epochs, rows.slice(0,3)), /almeno due soggetti/);
+});

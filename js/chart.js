@@ -371,13 +371,16 @@
       return { valid, range, commit, scale, translate, resetY, reset };
     }
 
-    function enableSubjectSelection(element, subjectId, label) {
+    function enableSubjectSelection(element, subjectId, label, epoch) {
+      element.dataset.subjectId = subjectId;
+      if (epoch) element.dataset.subjectEpoch = epoch;
       element.setAttribute('tabindex', '0');
       element.setAttribute('role', 'button');
-      element.setAttribute('aria-label', 'Evidenzia ' + label);
+      element.setAttribute('aria-label', 'Opzioni outlier · ' + label);
+      element.setAttribute('aria-haspopup', 'dialog');
       function select(event) {
         event.stopPropagation();
-        document.dispatchEvent(new CustomEvent('metrics-isolate-subject', { detail: { id: subjectId } }));
+        document.dispatchEvent(new CustomEvent('metrics-isolate-subject', { detail: { id: subjectId, epoch, anchor: element } }));
       }
       element.addEventListener('click', select);
       element.addEventListener('keydown', event => {
@@ -837,7 +840,7 @@
             const point=swarmPositions.get(tr)[i],label=`${tr.name} · ${categories[i]}: ${fmt(tr.y[i])}`;
             const circle=svgEl('circle',{cx:X(tr.x[i])+point.dx,cy:Y(tr.y[i]),r:point.r,fill:tr.color,stroke:'white','stroke-width':.6});
             circle.append(svgEl('title',{},label));
-            enableSubjectSelection(circle, tr.subjectId, label);
+            enableSubjectSelection(circle, tr.subjectId, label, categories[i]);
             traceLayer.append(circle);
           }
           continue;
@@ -867,10 +870,10 @@
             open = true;
           }
           const line = svgEl('path', { d: path, fill: 'none', stroke: tr.color, 'stroke-width': tr.bold ? 2.8 : 1.4, opacity: tr.bold ? 1 : .7 });
-          if (target === 'chart' && tr.subjectId && path.includes('L')) enableSubjectSelection(line, tr.subjectId, tr.name);
+          if (target === 'chart' && tr.subjectId && path.includes('L')) enableSubjectSelection(line, tr.subjectId, tr.name + ' · ' + (tr.epoch ?? ''), tr.epoch);
           traceLayer.append(line);
         }
-        if(categories||tr.x.length===1)for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i]))continue;const x=X(tr.x[i]),y=Y(tr.y[i]);if(tr.band&&C.finite(tr.band[i]))traceLayer.append(svgEl('line',{x1:x,x2:x,y1:Y(tr.y[i]-tr.band[i]),y2:Y(tr.y[i]+tr.band[i]),stroke:tr.color,'stroke-width':2}));const circle=svgEl('circle',{cx:x,cy:y,r:tr.bold?6:4,fill:tr.color,opacity:tr.bold?1:.65});circle.append(svgEl('title',{},`${tr.name}: ${fmt(tr.y[i])}`));traceLayer.append(circle);}
+        if(categories||tr.x.length===1)for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i]))continue;const x=X(tr.x[i]),y=Y(tr.y[i]);if(tr.band&&C.finite(tr.band[i]))traceLayer.append(svgEl('line',{x1:x,x2:x,y1:Y(tr.y[i]-tr.band[i]),y2:Y(tr.y[i]+tr.band[i]),stroke:tr.color,'stroke-width':2}));const circle=svgEl('circle',{cx:x,cy:y,r:tr.bold?6:4,fill:tr.color,opacity:tr.bold?1:.65});circle.append(svgEl('title',{},`${tr.name}: ${fmt(tr.y[i])}`));if(tr.subjectId)enableSubjectSelection(circle,tr.subjectId,tr.name+' · '+(categories?.[tr.x[i]]??tr.epoch??''),categories?.[tr.x[i]]??tr.epoch);traceLayer.append(circle);}
       }
       if(hover){svg.addEventListener('pointermove',event=>{if(svg.classList.contains('is-selecting')||svg.classList.contains('is-panning'))return;if(event.target.closest('.chart-panner')){$('tooltip').hidden=true;return;}const rect=svg.getBoundingClientRect(),x=xmin+((event.clientX-rect.left)/rect.width*w-p.l)/(w-p.l-p.r)*(xmax-xmin);$('tooltip').textContent=hover(x);$('tooltip').hidden=false;$('tooltip').style.left=Math.max(5,Math.min(event.clientX+12,window.innerWidth-320))+'px';$('tooltip').style.top=Math.max(5,Math.min(event.clientY+12,window.innerHeight-110))+'px';});svg.addEventListener('pointerleave',()=>{$('tooltip').hidden=true;});}
       const momentAnchors=[];
@@ -933,6 +936,7 @@
       } else {
         chart.append(svg);
       }
+      if (target === 'chart') document.dispatchEvent(new Event('metrics-subject-points-rendered'));
       if(target==='chart'&&!categories)document.dispatchEvent(new CustomEvent('metrics-markers-rendered',{detail:{anchors:momentAnchors}}));
       if(target==='statsGroupPlot'&&!categories)document.dispatchEvent(new CustomEvent('metrics-stat-bands-rendered',{detail:{anchors:statAnchors}}));
       if(hasVideoCursor)window.MetricsVideo?.attach(svg,{min:xmin,max:xmax,left:p.l,top:p.t,width:w-p.l-p.r,height:h-p.t-p.b,showStart:!zoom?.x,overview,followPlayback});

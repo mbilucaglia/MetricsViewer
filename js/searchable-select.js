@@ -47,7 +47,8 @@
 
   function close(returnFocus = false) {
     if (!current) return;
-    const { button } = current;
+    const { button, select, initialSelection } = current;
+    const changed = initialSelection !== Array.from(select.options, option => option.selected).join(',');
     current = null;
     popup.hidden = true;
     if (popup.parentElement !== document.body) document.body.append(popup);
@@ -55,6 +56,7 @@
     search.setAttribute('aria-expanded', 'false');
     search.removeAttribute('aria-activedescendant');
     if (returnFocus && button.isConnected) button.focus({ preventScroll: true });
+    if (changed) select.dispatchEvent(new Event('change', {bubbles: true}));
   }
 
   function position() {
@@ -108,17 +110,13 @@
       const item = document.createElement('div');
       item.id = 'selectSearchOption' + choices.length;
       item.className = 'searchable-select-option';
-      if (select.multiple) {
-        const check = document.createElement('span');
-        check.className = 'searchable-select-check';
-        check.setAttribute('aria-hidden', 'true');
-        check.textContent = option.selected ? '✓' : '';
-        const label = document.createElement('span');
-        label.textContent = option.label;
-        item.append(check, label);
-      } else {
-        item.textContent = option.label;
-      }
+      const check = document.createElement('span');
+      check.className = 'searchable-select-check';
+      check.setAttribute('aria-hidden', 'true');
+      check.textContent = option.selected ? '✓' : '';
+      const label = document.createElement('span');
+      label.textContent = option.label;
+      item.append(check, label);
       item.setAttribute('role', 'option');
       item.setAttribute('aria-selected', String(option.selected));
       if (option.disabled || option.closest('optgroup')?.disabled) {
@@ -129,12 +127,12 @@
         item.onclick = () => {
           if (select.multiple) {
             option.selected = !option.selected;
+            sync(select);
           } else {
             select.selectedIndex = option.index;
             close(true);
             sync(select);
           }
-          select.dispatchEvent(new Event('change', { bubbles: true }));
         };
         choices.push(item);
       }
@@ -190,6 +188,7 @@
       }
       close();
       current = entry;
+      entry.initialSelection = Array.from(select.options, option => option.selected).join(',');
       const host = button.closest('dialog') || document.body;
       if (popup.parentElement !== host) host.append(popup);
       popup.setAttribute('aria-label', title);
@@ -210,7 +209,7 @@
     for (const option of select.options) {
       if (!option.hidden && !option.matches(':disabled')) option.selected = selected;
     }
-    select.dispatchEvent(new Event('change', { bubbles: true }));
+    sync(select);
   }
 
   selectAll.onclick = () => setAllOptions(true);
@@ -239,6 +238,10 @@
       close(true);
     }
   });
+  document.addEventListener('click', event => {
+    if (current && event.target.closest('[data-confirm], [data-dismiss]')) close();
+  }, true);
+  document.addEventListener('cancel', () => close(), true);
   document.addEventListener('change', event => {
     if (event.target instanceof HTMLSelectElement) sync(event.target);
   });

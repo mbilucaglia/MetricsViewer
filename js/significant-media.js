@@ -47,6 +47,7 @@
       return line;
     });
     target.replaceChildren(time, ...estimates);
+    target.title = [time.textContent, ...estimates.map(line => line.textContent)].join(' · ');
   }
   function createViewer(ids={}, {floatingOnly=false,dock=null,anchorEvent=null,openAllButton=null}={}){
   const $=id=>document.getElementById(ids[id]||id);

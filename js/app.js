@@ -15,7 +15,9 @@
   function options(id,values){const previous=$(id).value;$(id).replaceChildren(...values.map(v=>{const o=node('option',v);o.value=v;return o;}));if(values.includes(previous))$(id).value=previous;$(id).disabled=!values.length;}
   function refreshSummaryEpochs() {
     const epochs = dataset ? allEpochs() : [];
-    summaryEpochs = new Set(epochs.filter(epoch => summaryEpochs.has(epoch) || !knownEpochs.has(epoch)));
+    const initial = !knownEpochs.size, hadSelection = summaryEpochs.size > 0;
+    summaryEpochs = new Set(epochs.filter(epoch => summaryEpochs.has(epoch)));
+    if ((initial || hadSelection && !summaryEpochs.size) && epochs.length) summaryEpochs.add(epochs.includes($('epoch').value) ? $('epoch').value : epochs[0]);
     knownEpochs = new Set(epochs);
     const select = $('summaryEpochs');
     select.replaceChildren(...epochs.map(epoch => {
@@ -96,15 +98,54 @@
     }
   });
 
+  function refreshSubjectList(available) {
+    const scroller = $('subjectList'), scrollTop = scroller.scrollTop;
+    $('subjectListHeading').hidden = mode !== 'summary' || !available.length;
+    const rows = available.map(({record, epochs}) => {
+      const row = node('div', undefined, 'subject-row'), label = node('label');
+      row.dataset.recordingId = record.id;
+      row.dataset.subject = record.subject;
+      row.dataset.epochs = JSON.stringify(epochs);
+      const check = node('input');
+      check.type = 'checkbox';
+      check.checked = selected.has(record.id);
+      check.setAttribute('aria-label', 'Seleziona ' + record.subject);
+      check.onchange = () => {
+        if (check.checked) selected.add(record.id);
+        else selected.delete(record.id);
+        render();
+      };
+      const text = node('span', record.subject);
+      text.style.color = palette[dataset.recordings.indexOf(record) % palette.length];
+      label.append(check, text);
+      const remove = node('button', '×');
+      remove.title = 'Rimuovi ' + record.subject;
+      remove.setAttribute('aria-label', remove.title);
+      remove.onclick = () => removeSubject(record);
+      row.append(label);
+      if (mode === 'summary') {
+        const stimuli = node('div', undefined, 'subject-epoch-chips');
+        stimuli.setAttribute('role', 'group');
+        stimuli.setAttribute('aria-label', 'Stimoli con dati per ' + record.subject);
+        stimuli.append(...epochs.map(epoch => {
+          const chip = node('span', epoch, 'subject-epoch-chip');
+          chip.dataset.subjectEpoch = epoch;
+          return chip;
+        }));
+        row.append(stimuli);
+      }
+      row.append(remove);
+      return row;
+    });
+    $('subjects').replaceChildren(...rows);
+    scroller.scrollTop = scrollTop;
+    $('counts').textContent = available.filter(item => selected.has(item.record.id)).length +
+      ' selezionati su ' + available.length + ' con dati';
+  }
+
   function refresh(){
     options('metric',dataset?allMetrics():[]);options('epoch',dataset?allEpochs():[]);options('baseline',dataset?allEpochs():[]);
     refreshSummaryEpochs();
-    $('subjects').replaceChildren();
-    for(const [i,r] of (dataset?.recordings||[]).entries()){
-      const row=node('div',undefined,'subject-row'),label=node('label');row.dataset.recordingId=r.id;row.dataset.subject=r.subject;const check=node('input');check.type='checkbox';check.checked=selected.has(r.id);check.setAttribute('aria-label',`Seleziona ${r.subject}`);
-      check.onchange=()=>{check.checked?selected.add(r.id):selected.delete(r.id);render();};
-      const text=node('span',r.subject);text.style.color=palette[i%palette.length];label.append(check,text);const remove=node('button','×');remove.title=`Rimuovi ${r.subject}`;remove.setAttribute('aria-label',remove.title);remove.onclick=()=>removeSubject(r);row.append(label,remove);$('subjects').append(row);
-    }
     const hasData = Boolean(dataset);
     $('workspace').hidden = !hasData;
     $('drop').classList.toggle('has-data', hasData);
@@ -157,7 +198,9 @@
   function prepared(records,epoch,metric,o,warnings){
     const normalized=normalizedDataset(dataset.recordings,metric,o);
     return records.flatMap(r=>{
-      const s=r.epochs.find(e=>e.id===epoch)?.metrics[metric];
+      const recordingEpoch = r.epochs.find(item => item.id === epoch);
+      if (!recordingEpoch) return [];
+      const s = recordingEpoch.metrics[metric];
       if(!s?.time.length){warnings.push(`${r.subject} · ${epoch}: metrica assente o vuota.`);return [];}
       try{const result=normalized.get(r.id)?.get(epoch);if(result?.error)throw new Error(result.error);if(!result.series.values.some(C.finite))throw new Error('Nessun valore valido.');return [{r,...result}];}
       catch(e){warnings.push(`${r.subject} · ${epoch}: ${e.message}`);return [];}
@@ -208,13 +251,32 @@
     let analysisInput=null;revealIndividualTraces=null;restoreIndividualTraces=null;forcedIndividuals=false;
     setAnalysisError('');$('chart').replaceChildren();$('warnings').replaceChildren();$('tooltip').hidden=true;exportRows=[];$('export').disabled=true;
     $('seriesOptions').hidden=mode!=='series';$('seriesTab').classList.toggle('is-active',mode==='series');$('summaryTab').classList.toggle('is-active',mode==='summary');$('seriesTab').setAttribute('aria-pressed',mode==='series');$('summaryTab').setAttribute('aria-pressed',mode==='summary');
-    const records=(dataset?.recordings||[]).filter(r=>selected.has(r.id));$('counts').textContent=`${records.length} selezionati su ${dataset?.recordings.length||0}`;
+    let records = [];
+    if (!dataset) refreshSubjectList([]);
     $('chartTitle').textContent = mode === 'series' ? 'Serie temporali' : 'Riepilogo temporale';
-    if(!records.length){$('chart').append(node('p',dataset?'Seleziona almeno un soggetto.':'Carica un dataset oppure prova l’esempio.','empty-state'));return;}
+    if (!dataset) { $('chart').append(node('p', 'Carica un dataset oppure prova l’esempio.', 'empty-state')); return; }
     const warnings=[];
     try{
       const o=config(),metric=$('metric').value,epoch=$('epoch').value,unit=o.norm==='percent'?' [%]':o.norm==='none'?'':` [${o.norm==='zscore'?'z-score':'z-MAD'}]`;
-      $('chartTitle').textContent=`${metric}${unit} · ${mode==='series'?epoch:'riepilogo temporale'}`;
+      const activeEpochs = mode === 'series' ? [epoch] : allEpochs().filter(id => summaryEpochs.has(id));
+      const availableById = new Map();
+      for (const id of activeEpochs) {
+        for (const item of prepared(dataset.recordings, id, metric, o, [])) {
+          const value = C.aggregate(item.series, mode === 'summary' ? $('aggregation').value : 'mean', o.from, o.to, C.gapLimit(item.series, o.maxGap)).value;
+          if (!C.finite(value)) continue;
+          if (!availableById.has(item.r.id)) availableById.set(item.r.id, {record: item.r, epochs: []});
+          availableById.get(item.r.id).epochs.push(id);
+        }
+      }
+      const available = dataset.recordings.flatMap(record => availableById.has(record.id) ? [availableById.get(record.id)] : []);
+      refreshSubjectList(available);
+      records = available.map(item => item.record).filter(record => selected.has(record.id));
+      $('chartTitle').textContent=metric + unit + ' · ' + (mode === 'series' ? epoch : 'riepilogo temporale');
+      if (!records.length) {
+        const message = !activeEpochs.length ? 'Seleziona almeno uno stimolo.' : available.length ? 'Seleziona almeno un soggetto.' : 'Nessun soggetto con dati utilizzabili.';
+        $('chart').append(node('p', message, 'empty-state'));
+        return;
+      }
       const color=r=>palette[dataset.recordings.indexOf(r)%palette.length];
       const provenance={metric,normalization:o.norm,baseline:o.norm==='none'?'':o.baseline,baseline_from:Number.isFinite(o.baseFrom)?o.baseFrom:'',baseline_to:Number.isFinite(o.baseTo)?o.baseTo:'',mad_scale:o.scaled?1.4826:1,analysis_from:Number.isFinite(o.from)?o.from:'',analysis_to:Number.isFinite(o.to)?o.to:''};
       if(mode==='series'){
@@ -226,7 +288,7 @@
         const aligned = C.align(items.map(x => x.series), alignmentOptions);
         analysisInput = { items, alignment: aligned, alignmentOptions };
         const individual = items.map(({ r }, i) => ({
-          name: r.subject, subjectId: r.id, x: aligned.time, y: aligned.values[i], color: color(r)
+          name: r.subject, subjectId: r.id, epoch, x: aligned.time, y: aligned.values[i], color: color(r)
         }));
         const intervals = aligned.summary.map(sample => MetricsAnalysis.ci95FromSummary(sample.n, sample.sd));
         const average = {
@@ -261,8 +323,8 @@
         exportRows=[...rows.map(r=>({row_type:'subject',...r,group_mean:null,group_sd:null,group_ci95_lower:null,group_ci95_upper:null,group_n:null})),...stats.map(s=>({row_type:'group',...provenance,epoch:s.epoch,subject:'',aggregation:method,value:null,n_samples:null,valid_duration_s:null,baseline_n:'',baseline_center:'',baseline_scale:'',max_gap:o.maxGap??'auto:3*native_median_step',group_mean:s.mean,group_sd:s.sd,group_ci95_lower:C.finite(s.ci)?s.mean-s.ci:null,group_ci95_upper:C.finite(s.ci)?s.mean+s.ci:null,group_n:s.n}))];
       }
       $('export').disabled=!exportRows.length;
-      document.dispatchEvent(new CustomEvent('metrics-ready',{detail:{mode,dataset,records,metric,epoch,o,analysisInput,exportRows,prepared,plot,render,markMoments,setVisualIsolation}}));
-    }catch(e){setAnalysisError(e.message);}
+      document.dispatchEvent(new CustomEvent('metrics-ready',{detail:{mode,dataset,records,selectedRecords:dataset.recordings.filter(record=>selected.has(record.id)),metric,epoch,o,analysisInput,exportRows,prepared,plot,render,markMoments,setVisualIsolation}}));
+    }catch(e){refreshSubjectList([]);setAnalysisError(e.message);}
     for(const message of [...new Set(warnings)])$('warnings').append(node('p',message));
   }
   function demo(){

@@ -236,3 +236,33 @@ I cerchi aprono anteprime numerate sotto il grafico. Il numero 1 indica il massi
 I comandi **Soggetti** e **Media ± IC 95%** cambiano solo la visualizzazione e conservano le anteprime. Cambiando dati, epoca, metrica, normalizzazione o criteri, i risultati vengono invalidati.
 
 La barra sopra il grafico trova massimi o minimi della media: con numero 1 seleziona l’estremo globale, con più risultati cerca gli estremi locali. Le clip includono un secondo prima e dopo, nei limiti del segnale. Nelle analisi statistiche le fasce verdi aprono anteprime numerate sotto il grafico. Il p finale determina quali intervalli mostrare. La numerazione parte dall’intervallo con la differenza massima più grande: distanza dal valore nullo per un campione, oppure distanza fra le medie dei gruppi. **Opzioni** contiene il tipo di test, le permutazioni, il seed e l’assegnazione ai gruppi. Il riepilogo riporta le scelte attive e le assegnazioni ai gruppi vengono conservate nella sessione del browser.
+
+
+### Disegno misto a permutazioni
+
+Nel **Riepilogo temporale → Analisi statistiche → Opzioni**, seleziona **Disegno misto · epoche × gruppi**. Scegli le epoche ripetute negli stessi soggetti e assegna i gruppi nel Campione statistico. Puoi proporre due gruppi scegliendo due stimoli esclusivi. Conferma le assegnazioni con **OK**.
+
+L’omnibus usa in webR la formula permuco `value ~ group * epoch + Error(subject/epoch)`, con metodo `Rd_kheradPajouh_renaud`. Riporta gruppo, epoca e interazione, con correzione Holm sui tre effetti. I confronti semplici comprendono tutte le coppie di epoche entro ciascun gruppo e tutti i confronti tra gruppi per epoca. I p-value derivano da cambi di segno per i confronti appaiati e permutazioni delle etichette entro la coppia di gruppi per quelli indipendenti. Holm corregge congiuntamente questa famiglia di confronti semplici.
+
+Ogni soggetto deve avere dati in tutte le epoche ripetute. Servono almeno due soggetti per gruppo. Per gruppi sbilanciati il report segnala l’approssimazione del test omnibus permuco. Il CSV dei risultati contiene formula, metodo, correzioni, conteggi effettivi e soggetti inclusi/esclusi. Il CSV dei dati conserva la matrice appaiata e l’assegnazione dei gruppi.
+
+### Lista soggetti e anteprime
+
+La lista **Soggetti** include chi ha valori utilizzabili per la metrica, l’intervallo e almeno uno degli stimoli visualizzati. Nel riepilogo ogni soggetto ha una riga con gli stimoli disponibili. Il giallo indica gli stimoli per cui è outlier. I filtri di stimolo e gruppo restringono la lista e si combinano con ricerca e isolamento outlier. Le checkbox dei soggetti controllano il campione. All’apertura viene selezionato un solo stimolo del riepilogo.
+
+Il clic su un punto del visualizzatore o sul badge di uno stimolo apre lo stesso menu vicino all'elemento selezionato. **Outlier** e **Non outlier** impostano un flag manuale per soggetto × stimolo × metrica, con aggiornamento dei punti, dei badge e del filtro **Solo outlier**. **Ripristina criterio automatico** rimuove la scelta manuale. I flag restano attivi durante i cambi di vista, normalizzazione e aggregazione nel dataset aperto. Svuotare il dataset o ricaricare l'esempio li azzera. I file originali e il campione statistico restano invariati. L'esclusione dai test avviene tramite i comandi del campione statistico e attualmente riguarda l'intero soggetto.
+
+Il CSV del riepilogo distingue origine manuale/automatica e stato automatico del flag. I CSV delle serie e dei risultati statistici includono anche le annotazioni manuali in `manual_outlier_flags`, con soggetto, stimolo, metrica e scelta.
+
+I menu a selezione multipla restano aperti durante la selezione e applicano insieme le scelte alla chiusura. I menu a selezione singola si chiudono e applicano la scelta al clic. Tutti i menu mostrano una spunta sulle voci selezionate. Nei PIP, tempo e stime condividono la riga del numero. **⋯** apre un popup con riproduzione ed esportazione. **Annulla** ripristina il volume precedente, mentre i comandi di riproduzione e di esportazione sono azioni immediate.
+
+webR e permuco vengono precaricati in background all’apertura della pagina. Le analisi riutilizzano la sessione pronta. Durante l’inizializzazione compaiono fase e tempo trascorso. Il calcolo emette conteggi reali delle permutazioni per ciascuna fase.
+
+
+### Confronto diretto fra stimoli di soggetti diversi
+
+Per confrontare stimoli esclusivi, selezionali nel **Riepilogo temporale** e scegli **Opzioni → Tipo di test → Stimoli di soggetti diversi · confronto indipendente**. Ogni soggetto contribuisce con il valore aggregato del solo stimolo visto. Lo stimolo determina il gruppo, con almeno due soggetti per stimolo. Un soggetto con dati in più stimoli selezionati richiede un disegno con misure ripetute.
+
+Due stimoli producono un confronto t indipendente a due code con p da permutazioni. Con più stimoli sono disponibili l’omnibus F e tutti i post-hoc con correzione max-|T|. Le medie e gli IC sono disegnati per stimolo. Il CSV dei dati del test conserva lo stimolo effettivo di ciascun soggetto.
+
+Nella lista Soggetti, i badge dello stimolo sono cliccabili. Il loro nome completo resta nel tooltip. Il clic su un punto o su un badge evidenzia la coppia soggetto–stimolo e porta la riga corrispondente in vista.

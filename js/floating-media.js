@@ -36,6 +36,9 @@
     }
     function close(index,restoreFocus=false){
       const item=windows.get(index);if(!item)return;
+      if (item.popup?.open) item.popup.close('cancel');
+      item.popup?.remove();
+      if (item.summary) item.row.prepend(item.summary);
       windows.delete(index);item.observer?.disconnect();mark(item.anchor,false);item.line?.remove();onClose(index,item.row);item.box.remove();
       if(restoreFocus&&item.anchor?.isConnected)item.anchor.focus({preventScroll:true});
       if(!windows.size)stop();else front([...windows.values()].at(-1));
@@ -60,24 +63,80 @@
       const handle=doc.createElement('button');handle.type='button';handle.className='moment-pip__drag';handle.textContent=`⋮⋮ ${index+1}`;handle.title=label;handle.setAttribute('aria-label',`Sposta frammento ${index+1}: trascina o usa le frecce`);
       const link=doc.createElement('button');link.type='button';link.className='moment-pip__link';link.textContent='↗';link.title='Mostra/nascondi collegamento';link.setAttribute('aria-pressed','true');link.setAttribute('aria-label','Mostra il segmento di collegamento al punto');
       const dismiss=doc.createElement('button');dismiss.type='button';dismiss.textContent='×';dismiss.setAttribute('aria-label','Chiudi anteprima');dismiss.onclick=()=>close(index,true);
-      const controls=doc.createElement('button');controls.type='button';controls.className='moment-pip__controls';controls.textContent='⋯';controls.title='Mostra/nascondi controlli';controls.setAttribute('aria-label','Mostra controlli di riproduzione ed esportazione');controls.setAttribute('aria-expanded','false');
+      const controls=doc.createElement('button');controls.type='button';controls.className='moment-pip__controls';controls.textContent='⋯';controls.title='Apri controlli';controls.setAttribute('aria-label','Apri controlli di riproduzione ed esportazione');controls.setAttribute('aria-haspopup','dialog');controls.setAttribute('aria-expanded','false');
+      const summary = row.querySelector?.('.preview-summary');
       let line=null;
       if(dock){
         const badge=doc.createElement('span');badge.className='moment-pip__number';badge.textContent=String(index+1);
         badge.setAttribute('style', '--preview-rank: ' + rank);
-        header.append(badge,controls,dismiss);
+        header.append(badge);
+        if (summary) header.append(summary);
+        header.append(controls,dismiss);
         box.append(header,row);
         const next=Array.from(dock.children).find(child=>Number(child.dataset.index)>index);
         dock.insertBefore(box,next||null);
       }else{
-        header.append(handle,link,controls,dismiss);box.append(header,row);doc.body.append(box);
+        header.append(handle);
+        if (summary) header.append(summary);
+        header.append(link,controls,dismiss);box.append(header,row);doc.body.append(box);
         line=doc.createElementNS(ns,'line');overlay.append(line);
       }
       const a=dock ? {right:0,top:0} : anchor.getBoundingClientRect(),offset=(windows.size%6)*24;
-      const item={index,box,row,anchor,line,handle:dock?dismiss:handle,controls,compact:true,linked:true,x:a.right+12+offset,y:a.top-box.offsetHeight/2+offset};windows.set(index,item);mark(anchor,true);
+      const item={index,box,row,anchor,line,summary,handle:dock?dismiss:handle,controls,compact:true,linked:true,x:a.right+12+offset,y:a.top-box.offsetHeight/2+offset};windows.set(index,item);mark(anchor,true);
       box.addEventListener('pointerdown',()=>front(item));box.addEventListener('focusin',()=>front(item));
       link.onclick=()=>{item.linked=!item.linked;link.setAttribute('aria-pressed',String(item.linked));position(item);};
-      controls.onclick=()=>{item.compact=!item.compact;box.classList.toggle('is-compact',item.compact);controls.setAttribute('aria-expanded',String(!item.compact));position(item);};
+      controls.onclick = () => {
+        if (item.popup?.open) return;
+        const popup = doc.createElement('dialog');
+        popup.className = 'settings-dialog moment-pip-popup';
+        popup.setAttribute('aria-label', 'Controlli anteprima ' + (index + 1));
+        const title = doc.createElement('h2');
+        title.textContent = 'Anteprima ' + (index + 1);
+        const top = doc.createElement('header');
+        top.className = 'settings-dialog-header';
+        const dismissPopup = doc.createElement('button');
+        dismissPopup.type = 'button';
+        dismissPopup.textContent = '×';
+        dismissPopup.setAttribute('aria-label', 'Chiudi senza salvare');
+        dismissPopup.onclick = () => popup.close('cancel');
+        top.append(title, dismissPopup);
+        const body = doc.createElement('div');
+        body.className = 'settings-dialog-body';
+        const moved = [];
+        for (const element of row.querySelectorAll('.segment-controls, :scope > span, :scope > button, :scope > .panel-note')) {
+          const placeholder = doc.createComment('PIP control');
+          element.before(placeholder);
+          moved.push({element, placeholder});
+          body.append(element);
+        }
+        const video = row.querySelector('video');
+        const initialVolume = video?.volume;
+        const footer = doc.createElement('footer');
+        footer.className = 'settings-dialog-actions';
+        const cancel = doc.createElement('button'), ok = doc.createElement('button');
+        cancel.type = ok.type = 'button';
+        cancel.textContent = 'Annulla'; ok.textContent = 'OK';
+        cancel.onclick = () => popup.close('cancel');
+        ok.onclick = () => popup.close('ok');
+        footer.append(cancel, ok);
+        popup.append(top, body, footer);
+        doc.body.append(popup);
+        item.popup = popup;
+        controls.setAttribute('aria-expanded', 'true');
+        popup.addEventListener('close', () => {
+          if (popup.returnValue !== 'ok' && video) {
+            video.volume = initialVolume;
+            const volume = popup.querySelector('.segment-volume');
+            if (volume) volume.value = String(initialVolume);
+          }
+          for (const {element, placeholder} of moved) placeholder.replaceWith(element);
+          controls.setAttribute('aria-expanded', 'false');
+          popup.remove();
+          item.popup = null;
+          if (controls.isConnected) controls.focus({preventScroll:true});
+        }, {once: true});
+        popup.showModal();
+      };
       if (dock) {
         front(item);
         if (reveal) {

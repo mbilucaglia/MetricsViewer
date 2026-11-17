@@ -16,7 +16,8 @@
       const flaggedEpochs=epochs.filter(epoch=>epochFlags.get(epoch)?.get(r.id)?.status==='flagged');
       const evaluated=epochs.filter(epoch=>['flagged','within'].includes(epochFlags.get(epoch)?.get(r.id)?.status));
       const unavailableEpochs=epochs.filter(epoch=>!evaluated.includes(epoch));
-      return [r.id,{status:method==='none'?'disabled':flaggedEpochs.length?'flagged':evaluated.length?'within':'insufficient',flaggedEpochs,evaluatedEpochs:evaluated,unavailableEpochs,totalEpochs:epochs.length}];
+      const manualEpochs=epochs.filter(epoch=>epochFlags.get(epoch)?.get(r.id)?.manual);
+      return [r.id,{status:method==='none'&&!manualEpochs.length?'disabled':flaggedEpochs.length?'flagged':evaluated.length?'within':'insufficient',flaggedEpochs,evaluatedEpochs:evaluated,unavailableEpochs,manualEpochs,totalEpochs:epochs.length}];
     }));
   }
   function temporalFlags(items,options,method='iqr'){
@@ -48,6 +49,24 @@
     const subjects=records.map(r=>({id:r.id,subject:r.subject,values:epochs.map(e=>rows.find(x=>x.subject===r.subject&&x.epoch===e)?.value??null)}));
     return {times:epochs.map((_,i)=>i),subjects:subjects.filter(s=>s.values.every(C.finite)),excluded:subjects.filter(s=>!s.values.every(C.finite)).map(s=>s.subject)};
   }
-  const api={scalarFlags,summaryFlags,temporalFlags,ci95,ci95FromSummary,completeTimeMatrix,completeSummaryMatrix};
+  function independentStimuliMatrix(records, epochs, rows) {
+    if (epochs.length < 2) throw new Error('Seleziona almeno due stimoli da confrontare.');
+    const subjects = [];
+    for (const record of records) {
+      const available = epochs.flatMap((epoch, groupIndex) => {
+        const value = rows.find(row => row.subject === record.subject && row.epoch === epoch)?.value;
+        return C.finite(value) ? [{epoch, groupIndex, value}] : [];
+      });
+      if (available.length > 1) throw new Error('Il confronto fra stimoli di soggetti diversi richiede un solo stimolo per soggetto. Per misure ripetute scegli il confronto entro soggetto.');
+      if (!available.length) continue;
+      const {epoch, groupIndex, value} = available[0];
+      subjects.push({id: record.id, subject: record.subject, values: [value], groupIndex, sourceEpoch: epoch});
+    }
+    if (epochs.some((_, groupIndex) => subjects.filter(subject => subject.groupIndex === groupIndex).length < 2)) {
+      throw new Error('Servono almeno due soggetti con dati per ciascuno stimolo selezionato.');
+    }
+    return {subjects, times: [0], epochs: ['Confronto tra stimoli'], stimuli: epochs};
+  }
+  const api={independentStimuliMatrix,scalarFlags,summaryFlags,temporalFlags,ci95,ci95FromSummary,completeTimeMatrix,completeSummaryMatrix};
   if(typeof module!=='undefined')module.exports=api;else root.MetricsAnalysis=api;
 })(globalThis);

@@ -1,14 +1,23 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 function setup(flagged = [], records = ['a','b','c','d'].map(id=>({id,subject:id})), engine){
+  for (const record of records) record.epochs ??= ['A', 'B', 'C'].map(id => ({id, metrics: {AWI: {time: [0, 1], values: [1, 2]}}}));
   class Element{
-    constructor(tag='div'){this.tagName=tag;this.children=[];this.dataset={};this.style={};this.value='';this.text='';this.classList={toggle(){}};this.handlers={};}
+    constructor(tag='div'){this.tagName=tag;this.children=[];this.dataset={};this.style={};this.value='';this.text='';this.classList={toggle(){}};this.handlers={};this.attributes={};}
     append(...children){this.children.push(...children);for(const c of children)c.parentElement=this;}
     replaceChildren(...children){this.children=[];this.append(...children);}
-    setAttribute(){} addEventListener(name,handler){this.handlers[name]=handler;} click(){this.onclick?.();} remove(){} focus(){}
+    closest(){return this.parentElement;}
+    setAttribute(name,value){this.attributes[name]=value;}
+    addEventListener(name,handler){this.handlers[name]=handler;}
+    click(){this.onclick?.({currentTarget:this});} remove(){} focus(){}
+    matches(selector){return selector===':popover-open'&&!!this.popoverOpen;}
+    showPopover(){this.popoverOpen=true;}
+    hidePopover(){this.popoverOpen=false;this.handlers.toggle?.({newState:'closed'});}
+    getBoundingClientRect(){return {left:100,right:110,top:100,bottom:110};}
     showModal(){this.open=true;} close(){this.open=false;this.handlers.close?.();}
     get textContent(){return this.text+this.children.map(c=>c.textContent).join(' ');}set textContent(v){this.text=String(v);}
-    get selectedOptions(){return [{textContent:this.value}];}
+    get options(){return this.children;}
+    get selectedOptions(){return this.children.some(option => option.selected) ? this.children.filter(option => option.selected) : [{textContent:this.value}];}
     querySelectorAll(selector){return selector==='[data-dismiss]'?[this.dismiss??=new Element('button')]:[];}
     querySelector(selector){return selector==='[data-confirm]'?(this.confirm??=new Element('button')):(this.option??=new Element('option'));}
   }
@@ -44,8 +53,8 @@ function setup(flagged = [], records = ['a','b','c','d'].map(id=>({id,subject:id
   const sandbox=vm.createContext(env);
   for (const script of ['settings-dialog','statistics-ui']) vm.runInContext(fs.readFileSync(require.resolve('../js/'+script),'utf8'),sandbox);
   const allRows=records.flatMap((r,i)=>['A','B','C'].map((epoch,j)=>({subject:r.subject,epoch,value:[i+1,2*i+3,3*i+2][j],n_samples:3})));
-  function ready(epochs=['A','B','C'],mode='summary',rows=allRows,selection=records){
-    const ctx={mode,dataset:{recordings:records},records:selection,metric:'AWI',epoch:'A',o:{norm:'none',from:0,to:1},analysisInput:mode==='summary'?{epochs,rows:rows.filter(r=>epochs.includes(r.epoch))}:{items:records.map(r=>({r})),alignment:{time:[0,1],values:records.map((r,i)=>[i+1,i+2])}},exportRows:[],prepared:()=>[],setVisualIsolation(){},plot:(traces,options)=>plots.push({traces,options})};
+  function ready(epochs=['A','B','C'],mode='summary',rows=allRows,selection=records,prepared=()=>[]){
+    const ctx={mode,dataset:{recordings:records},records:selection,metric:'AWI',epoch:'A',o:{norm:'none',from:0,to:1},analysisInput:mode==='summary'?{epochs,rows:rows.filter(r=>epochs.includes(r.epoch))}:{items:records.map(r=>({r})),alignment:{time:[0,1],values:records.map((r,i)=>[i+1,i+2])}},exportRows:[],prepared,setVisualIsolation(){},plot:(traces,options)=>plots.push({traces,options})};
     handlers['metrics-invalidated']({detail:{mode}});handlers['metrics-ready']({detail:ctx});return ctx;
   }
   return {get,ready,plots,blobs,allRows,handlers,media,calls,getSession:()=>session};
@@ -253,4 +262,107 @@ test('p-value thresholds apply on OK, update the report without recalculation, a
   dialog.dismiss.click();
   assert.equal(ui.get('pThresholdSingle').value, '0.2');
   assert.equal(ui.plots.at(-1).options.pThresholds.single, .2);
+});
+
+
+test('independent stimulus comparison sends disjoint subjects to webR and exports their actual epoch', async () => {
+  const ui = setup();
+  const rows = ui.allRows.filter(row => ['a','b'].includes(row.subject) ? row.epoch==='A' : row.epoch==='B');
+  ui.ready(['A','B'], 'summary', rows);
+  ui.get('design').value = 'between';
+  ui.get('design').onchange();
+  await ui.get('runStats').onclick();
+  assert.equal(ui.get('statsStatus').textContent, '');
+  assert.equal(ui.calls[0].mode, 'multi');
+  assert.deepEqual(Array.from(ui.calls[0].groupNames), ['A','B']);
+  assert.deepEqual(Array.from(ui.calls[0].subjects, subject => subject.values.length), [1,1,1,1]);
+  assert.equal(ui.media.at(-1).results.length, 1);
+  assert.match(ui.media.at(-1).results[0].test, /t gruppi indipendenti/);
+  assert.deepEqual(Array.from(ui.plots.at(-1).options.categories), ['A','B']);
+  assert.equal(ui.plots.at(-1).options.comparisons[0].epochA, 'A');
+  assert.equal(ui.plots.at(-1).options.comparisons[0].epochB, 'B');
+  await ui.get('exportStatsInput').onclick();
+  const csv = await ui.blobs[0].text();
+  assert.match(csv, /"1","a","a","1","A","1","A"/);
+  assert.match(csv, /"3","c","c","2","B","1","B"/);
+});
+
+test('manual outlier flags are scoped to subject, stimulus and metric and export without excluding subjects', async () => {
+  const ui = setup();
+  const prepared = (records, epoch) => records.map((r, i) => ({r,series:{time:[0,1],values:[i+1,i+2]}}));
+  const ctx = ui.ready(['A','B'],'summary',ui.allRows,undefined,prepared);
+  ctx.exportRows.push({row_type:'subject',subject:'a',epoch:'A'}, {row_type:'subject',subject:'a',epoch:'B'});
+  const anchor = ui.get('anchor');anchor.dataset.subjectId='a';
+  function open(epoch='A'){
+    ui.handlers['metrics-isolate-subject']({detail:{id:'a',epoch,anchor}});
+  }
+  open();
+  assert.equal(ui.get('pointOutlierMenu').popoverOpen,true);
+  assert.match(ui.get('pointOutlierIdentity').textContent,/a · A/);
+  assert.equal(ui.get('resetPointOutlier').hidden,true);
+  ui.get('markPointOutlier').click();
+  assert.equal(ui.get('pointOutlierMenu').popoverOpen,false);
+  assert.equal(ctx.exportRows[0].outlier_status,'flagged');
+  assert.equal(ctx.exportRows[0].outlier_source,'manual');
+  assert.equal(ctx.exportRows[1].outlier_source,'automatic');
+  open('B');
+  assert.equal(ui.get('resetPointOutlier').hidden,true);
+  assert.equal(ui.get('markPointNormal').attributes['aria-checked'],'true');
+  ui.get('closePointOutlierMenu').click();
+  open();
+  assert.equal(ui.get('markPointOutlier').attributes['aria-checked'],'true');
+  assert.equal(ui.get('resetPointOutlier').hidden,false);
+  ui.get('markPointNormal').click();
+  assert.equal(ctx.exportRows[0].outlier_status,'within');
+  assert.equal(ctx.exportRows[0].outlier_source,'manual');
+  await ui.get('runStats').onclick();
+  assert.equal(ui.media.at(-1).results[0].n,4);
+  assert.equal(ui.media.at(-1).meta.manually_excluded_subjects,'');
+  assert.deepEqual(JSON.parse(ui.media.at(-1).meta.manual_outlier_flags),
+    [{subject_id:'a',subject:'a',epoch:'A',metric:'AWI',outlier:false}]);
+  open();ui.get('resetPointOutlier').click();
+  assert.equal(ctx.exportRows[0].outlier_source,'automatic');
+  await ui.get('exportStats').onclick();
+  assert.match(await ui.blobs[0].text(),/manual_outlier_flags/);
+  ui.ready(['A','B'],'summary',ui.allRows,undefined,prepared);
+  open();assert.equal(ui.get('resetPointOutlier').hidden,true);
+});
+
+test('manual flags survive view changes and clear on replacement of the dataset', () => {
+  const ui = setup();
+  const prepared = records => records.map((r,i)=>({r,series:{time:[0,1],values:[i+1,i+2]}}));
+  const anchor=ui.get('anchor');anchor.dataset.subjectId='a';
+  const open=epoch=>ui.handlers['metrics-isolate-subject']({detail:{id:'a',epoch,anchor}});
+  ui.ready(['A','B'],'summary',ui.allRows,undefined,prepared);
+  open('A');ui.get('markPointOutlier').click();
+  let ctx=ui.ready(['A'],'series',ui.allRows,undefined,prepared);
+  open('A');assert.equal(ui.get('markPointOutlier').attributes['aria-checked'],'true');
+  ui.get('closePointOutlierMenu').click();
+  ctx.metric='OTHER';
+  ui.handlers['metrics-ready']({detail:ctx});
+  open('A');assert.equal(ui.get('resetPointOutlier').hidden,true);
+  ui.get('closePointOutlierMenu').click();
+  ctx.metric='AWI';ui.handlers['metrics-ready']({detail:ctx});
+  open('A');assert.equal(ui.get('resetPointOutlier').hidden,false);
+  ui.handlers['metrics-dataset-replaced']();
+  ui.handlers['metrics-ready']({detail:ctx});
+  open('A');assert.equal(ui.get('resetPointOutlier').hidden,true);
+});
+
+test('Non outlier overrides a detected outlier and automatic reset restores the detector', () => {
+  const records=['a','b','c','d','e','f'].map(id=>({id,subject:id}));
+  const ui=setup([],records);
+  ui.get('outlierSummary').value='iqr';
+  const prepared=records=>records.map((r,i)=>({r,series:{time:[0,1],values:[i===5?100:i,i===5?100:i]}}));
+  const ctx=ui.ready(['A','B'],'summary',ui.allRows,records,prepared);
+  ctx.exportRows.push({row_type:'subject',subject:'f',epoch:'A'});
+  const anchor=ui.get('anchor');anchor.dataset.subjectId='f';
+  const open=()=>ui.handlers['metrics-isolate-subject']({detail:{id:'f',epoch:'A',anchor}});
+  open();assert.equal(ui.get('markPointOutlier').attributes['aria-checked'],'true');
+  ui.get('markPointNormal').click();
+  assert.equal(ctx.exportRows[0].outlier_status,'within');
+  assert.equal(ctx.exportRows[0].outlier_automatic_status,'flagged');
+  open();ui.get('resetPointOutlier').click();
+  assert.equal(ctx.exportRows[0].outlier_status,'flagged');
+  assert.equal(ctx.exportRows[0].outlier_source,'automatic');
 });

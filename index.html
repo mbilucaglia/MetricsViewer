@@ -297,10 +297,16 @@
                 <h2>Soggetti</h2>
                 <p id="counts" class="panel-note">Nessun soggetto.</p>
                 <div class="selection-actions">
-                  <button type="button" id="all">Seleziona tutti</button><button type="button" id="none">Deseleziona</button>
+                  <button type="button" id="all">Seleziona tutti</button><button type="button" id="none">Deseleziona</button><button
+                      id="isolateOutliers"
+                      type="button"
+                      disabled
+                      aria-pressed="false"
+                    >
+                    Solo outlier (0)</button>
                 </div>
                 <div class="control-block">
-                  <label for="outlierSeries">Outlier · time series</label><select id="outlierSeries">
+                  <label for="outlierSeries">Outlier</label><select id="outlierSeries">
                     <option value="iqr">1,5 × IQR (Tukey)</option>
                     <option value="mad">z robusto · MAD > 3,5</option>
                     <option value="mean-iqr">Media temporale · 1,5 × IQR</option>
@@ -308,7 +314,7 @@
                   </select>
                 </div>
                 <div class="control-block" id="summaryOutlierControl" hidden>
-                  <label for="outlierSummary">Outlier · riepilogo temporale</label><select id="outlierSummary">
+                  <label for="outlierSummary">Outlier</label><select id="outlierSummary">
                     <option value="iqr">1,5 × IQR sui riepiloghi</option>
                     <option value="mad">z robusto · MAD sui riepiloghi</option>
                     <option value="none">Disattivato</option>
@@ -316,19 +322,27 @@
                 </div>
                 <p id="outlierContext" class="panel-note"></p>
                 <div class="selection-actions">
-                  <button
-                      id="isolateOutliers"
-                      type="button"
-                      disabled
-                      aria-pressed="false"
-                    >
-                    ◎ Isola outlier (0)</button><button id="restoreIsolation" type="button" hidden>
+                  <button id="restoreIsolation" type="button" hidden>
                     Ripristina vista
                   </button>
                   <button id="excludeVisibleOutliers" type="button" hidden disabled>Escludi dai test</button>
                 </div>
                 <p id="isolationStatus" class="panel-note" aria-live="polite"></p>
-                <input id="subjectSearch" type="search" placeholder="Cerca soggetto…" aria-label="Cerca soggetto" aria-controls="subjectList" autocomplete="off" />
+                <div class="subject-filters">
+                  <label>Soggetto
+                    <input id="subjectSearch" type="search" placeholder="Cerca soggetto…" aria-label="Cerca soggetto" aria-controls="subjectList" autocomplete="off" />
+                  </label>
+                  <label id="subjectEpochFilterControl" hidden>Stimolo nella lista
+                    <select id="subjectEpochFilter" aria-controls="subjectList"><option value="">Tutti quelli nel grafico</option></select>
+                  </label>
+                  <label id="subjectGroupFilterControl" hidden>Gruppo nella lista
+                    <select id="subjectGroupFilter" aria-controls="subjectList"><option value="">Tutti i gruppi</option></select>
+                  </label>
+                </div>
+                <p id="subjectFilterCount" class="panel-note" role="status"></p>
+                <div id="subjectListHeading" class="subject-list-columns" aria-hidden="true" hidden>
+                  <span>Soggetto</span><span>Stimoli con dati</span>
+                </div>
                 <div class="subject-list" id="subjectList" tabindex="0" role="region" aria-label="Lista soggetti">
                   <div id="subjects"></div>
                   <p id="subjectSearchEmpty" class="panel-note" role="status" hidden>Nessun soggetto trovato.</p>
@@ -500,6 +514,8 @@
             <option value="within" hidden disabled>
               Entro soggetto · confronto tra epoche
             </option>
+            <option value="between" hidden disabled>Stimoli di soggetti diversi · confronto indipendente</option>
+            <option value="mixed" hidden disabled>Disegno misto · epoche × gruppi</option>
             <option value="one" selected>
               Un campione · confronto con valore nullo
             </option>
@@ -540,6 +556,22 @@
           required
           />
         </div>
+      </div>
+      <div id="mixedDesignControls" hidden>
+        <div class="control-block">
+          <label for="mixedEpochs">Epoche ripetute negli stessi soggetti</label>
+          <select id="mixedEpochs" multiple></select>
+        </div>
+        <p class="panel-note">Seleziona le epoche comuni da confrontare, come Pre e Post. Il gruppo di ogni soggetto si assegna nel Campione statistico.</p>
+        <details class="disclosure">
+          <summary>Assegna due gruppi dagli stimoli visti</summary>
+          <div class="disclosure__body">
+            <div class="control-block"><label for="mixedGroupEpochA">Stimolo del primo gruppo</label><select id="mixedGroupEpochA"></select></div>
+            <div class="control-block"><label for="mixedGroupEpochB">Stimolo del secondo gruppo</label><select id="mixedGroupEpochB"></select></div>
+            <button type="button" id="assignGroupsFromEpochs">Proponi assegnazioni</button>
+            <p id="mixedAssignmentStatus" class="panel-note" role="status"></p>
+          </div>
+        </details>
       </div>
       <fieldset class="stats-p-thresholds">
         <legend>Soglie del p-value finale</legend>
@@ -621,6 +653,21 @@
         <button type="button" data-confirm>OK</button>
       </footer>
     </dialog>
+    <div id="pointOutlierMenu" class="point-outlier-menu" popover role="dialog" aria-labelledby="pointOutlierIdentity">
+      <header class="point-outlier-menu__header">
+        <h2 id="pointOutlierIdentity"></h2>
+        <button type="button" id="closePointOutlierMenu" aria-label="Chiudi menu">×</button>
+      </header>
+      <div role="menu" aria-label="Flag del punto">
+        <button type="button" id="markPointOutlier" class="point-outlier-menu__choice" role="menuitemradio" aria-checked="false">
+          <span class="point-outlier-menu__check" aria-hidden="true"></span><span class="point-outlier-menu__dot is-outlier" aria-hidden="true"></span>Outlier
+        </button>
+        <button type="button" id="markPointNormal" class="point-outlier-menu__choice" role="menuitemradio" aria-checked="false">
+          <span class="point-outlier-menu__check" aria-hidden="true"></span><span class="point-outlier-menu__dot" aria-hidden="true"></span>Non outlier
+        </button>
+      </div>
+      <button type="button" id="resetPointOutlier" class="point-outlier-menu__reset" hidden>Ripristina criterio automatico</button>
+    </div>
     <dialog
         id="busyDialog"
         aria-labelledby="busyTitle"
