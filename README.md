@@ -124,9 +124,17 @@ MAD nulla: un valore diverso dalla mediana oltre la tolleranza numerica è segna
 
 ## Analisi statistiche
 
+**Mostra dettagli** apre una tabella per tipo di test e le relative descrittive. I test t riportano la differenza media, l’errore standard, l’IC 95% puntuale di Student e Cohen d (d_z per i confronti appaiati). I test F riportano i gradi di libertà, i quadrati medi e η² parziale. Per i cluster sono riportati intervallo, direzione, soglia, massa e statistica al picco. Gli IC sono calcolati per ciascuna stima e i p-value dalla distribuzione di permutazione. I ricampionamenti riportati includono la configurazione osservata.
+
+**Esporta analisi CSV** include tutte le righe, le descrittive associate ai test puntuali e le impostazioni dell’analisi. **Esporta dati del test**, nel pannello Dettagli, salva la matrice effettivamente passata a webR, con ordine di soggetti e campioni, gruppi e interruzioni. I due CSV consentono di ricostruire il campione e le impostazioni del calcolo.
+
+Nelle **Serie temporali**, scegli **Max‑T per istante** o **Massa dei cluster** in **Opzioni → Correzione**. Max‑T valuta ogni istante. La modalità cluster valuta gli intervalli nel loro insieme. La soglia di formazione è α = 0,05, a due code per t e a coda superiore per F. Le lacune e i cambi di segno separano i cluster t. Il CSV dei cluster contiene inizio, fine, massa e p del cluster.
+
+Tutte le analisi statistiche usano [webR](https://docs.r-wasm.org/webr/latest/serving.html) e [permuco](https://jaromilfrossard.github.io/permuco/reference/compute_maxT.html). Il primo avvio scarica il runtime e il pacchetto. Se il caricamento fallisce, il viewer mostra un messaggio e consente di riprovare. Il CSV riporta il seed e il numero effettivo di ricampionamenti di ciascun test, inclusa la configurazione osservata.
+
 In **Opzioni → Campione statistico**, gli outlier sono evidenziati in giallo. Spunta un soggetto per escluderlo dai test. I soggetti deselezionati in **Soggetti** compaiono già spuntati. Per escludere in blocco gli outlier visibili, usa **Isola outlier** nella lista **Soggetti** e poi **Escludi dai test**. Le esclusioni valgono per tutte le analisi del dataset aperto e quelle esplicite compaiono nel CSV statistico. **Annulla esclusioni manuali** rimuove le esclusioni applicate ai soli test.
 
-Il motore deriva da `TimeSeriesViewer/js/permutation.js` e preserva:
+Il motore usa questi schemi di permutazione:
 
 - Test a un campione: statistica t contro un valore nullo, con sign-flipping dei residui per soggetto; test a due code.
 - Gruppi indipendenti: F omnibus, con permutazione delle etichette dei soggetti e dimensioni dei gruppi conservate. I gruppi si creano e si assegnano nella sezione **Opzioni → Campione statistico**. Servono almeno due soggetti per gruppo. Nel riepilogo, i post-hoc identificano le coppie tramite permutazioni globali delle etichette e correzione congiunta max-|T| su coppie × epoche.
@@ -142,7 +150,7 @@ Nel riepilogo il disegno predefinito è **Epoche degli stessi soggetti · appaia
 - **Post-hoc:** tutte le K(K−1)/2 coppie delle epoche selezionate, statistiche t appaiate a due code. Ogni permutazione applica lo stesso segno a tutte le differenze di un soggetto, preservando la dipendenza tra contrasti. Il massimo |T| su tutte le coppie genera i p-value corretti per la famiglia. I post-hoc sono riportati anche se l’omnibus non è significativo; la correzione max-|T| riguarda la famiglia dei post-hoc, non unisce l’omnibus alla famiglia.
 - **Output:** statistiche, differenza media A − B, N, p grezzi e finali, correzione applicata. Il CSV aggiunge epoche A/B, gradi di libertà descrittivi, soggetti inclusi/esclusi, normalizzazione, aggregazione, seed e numero di permutazioni. L’ordine A/B segue quello delle epoche nell’app ed è esplicito in tabella/CSV.
 
-Il numero scelto indica le permutazioni **per fase**: con almeno tre epoche, B per l’omnibus e B per i post-hoc congiunti. L’avanzamento copre entrambe le fasi; seed e annullamento sono supportati. Tutti i p-value Monte Carlo usano `(eccedenze + 1) / (B + 1)`, senza riferimento alle distribuzioni teoriche t/F.
+Il numero scelto indica le permutazioni richieste per ciascuna fase. Con almeno tre epoche, l’omnibus a misure ripetute usa B permutazioni entro soggetto e la configurazione osservata. Per altri test, permuco può enumerare tutte le configurazioni quando sono meno di B + 1. Nei confronti tra gruppi, omnibus e post-hoc condividono le permutazioni delle etichette. Puoi annullare il calcolo mentre webR è in esecuzione.
 
 I disegni preesistenti contro valore nullo e tra gruppi indipendenti rimangono disponibili: in questi casi si testa separatamente ogni epoca, correggendo su tutte le epoche selezionate, e non si confrontano le epoche tra loro.
 
@@ -183,9 +191,9 @@ Nei test statistici l’avanzamento mostra il numero effettivo di permutazioni c
 
 L’esportatore include tutti i soggetti dei file selezionati, senza una seconda lista di selezione. Una metrica rappresentata da un singolo NaN (epoca troppo corta) viene esportata come serie vuota; se nell’epoca restano solo metriche non disponibili, l’epoca viene omessa per quel soggetto. I soggetti senza epoche restanti vengono omessi; se non rimane alcun soggetto, l’esportazione termina con un messaggio senza scrivere il file. Il numero di epoche omesse viene riportato nella Command Window.
 
-Attiva la lente per ingrandire un’area trascinando sul grafico. Il pulsante accanto alla lente ripristina entrambi gli assi. Nelle barre sotto e a destra, trascina le estremità per regolare lo zoom o la parte centrale per spostare la finestra visibile. **Auto** ripristina l’intera scala dell’asse corrispondente. Gli intervalli impostati mantengono i loro limiti anche quando cambi i soggetti selezionati. Clicca una traccia individuale o un punto per evidenziare il soggetto nella lista.
+Trascina le maniglie dei panner per fare zoom o la finestra centrale per spostare la vista. Il panner orizzontale mostra le curve nel tempo e parte dal primo campione. Durante la riproduzione segue il cursore mantenendo l’ampiezza della finestra. Il panner verticale mostra l’istogramma dei valori. Le caselle accanto alle icone riflettono i limiti visibili mentre trascini le maniglie. Puoi anche digitare valori, inclusi quelli oltre i dati, e confermare con Invio. Il pulsante di scala automatica adatta Y, la lente attiva lo zoom a selezione e la freccia ripristina entrambi gli assi.
 
-Il clic fuori dai controlli di isolamento e dai punti interattivi, oppure Escape, ripristina la vista dei soggetti. Nei grafici statistici del riepilogo le parentesi collegano le coppie significative: * p finale <= 0,05, ** <= 0,01, *** <= 0,001. Per i post-hoc si usano i p corretti max-|T|; il p omnibus non determina le parentesi. Le annotazioni restano sopra il grafico anche con scala Y personalizzata.
+Il clic fuori dai controlli di isolamento e dai punti interattivi, oppure Escape, ripristina la vista dei soggetti. Nei grafici statistici del riepilogo le parentesi collegano tutte le coppie testate. Le etichette seguono le soglie del p finale impostate in **Opzioni**. I valori iniziali sono * ≤ 0,05, ** ≤ 0,01, *** ≤ 0,001 e n.s. > 0,05. Le parentesi sono continue anche per i confronti n.s. Per i post-hoc si usano i p corretti max-|T|; il p omnibus non determina le parentesi. Le annotazioni restano sopra il grafico anche con scala Y personalizzata.
 
 Annotazioni statistiche del riepilogo: nel disegno entro soggetto le parentesi collegano epoche; per gruppi indipendenti collegano le barre dei gruppi nella stessa epoca; contro valore nullo compare un asterisco sulla singola barra. I post-hoc indipendenti usano statistiche t pooled a due code. A ogni permutazione le etichette di tutti i gruppi vengono riassegnate ai soggetti, conservando le numerosità; la stessa assegnazione vale in tutte le epoche. Il massimo |T| su tutte le coppie × tutte le epoche produce una sola distribuzione nulla e i p corretti, senza fattori Bonferroni. Anche i p grezzi provengono da questa permutazione globale. La famiglia dei post-hoc è separata dagli omnibus. Servono scambiabilità tra tutti i gruppi sotto il nullo globale e, per controllo forte sotto nulli parziali, la condizione di subset pivotality; distribuzioni o varianze diverse non sono automaticamente ammesse. B permutazioni congiunte per la fase post-hoc, non B per coppia. CSV: gruppi, epoche, differenza A-B, numerosità, p grezzo/finale e correzione.
 
@@ -201,7 +209,7 @@ Il cambio di epoca riparte da zero; il riepilogo temporale mette in pausa e nasc
 
 ### Momenti significativi e video
 
-Le tabelle statistiche mostrano per impostazione predefinita solo i risultati con **p finale ≤ 0,05**; togli la spunta per consultare tutti i risultati. Il CSV mantiene tutti i risultati e i p-value corretti.
+Il filtro dei risultati significativi e le anteprime video usano la soglia di * (0,05 inizialmente). In **Opzioni** puoi modificare le soglie e applicarle ai risultati già calcolati. Per i cluster la soglia di formazione resta α = 0,05. Il CSV mantiene tutti i risultati, i p-value corretti e le soglie impostate.
 
 Dopo un’analisi Time series, **Momenti significativi nel video** raggruppa solo campioni significativi adiacenti sulla griglia originale; campioni non significativi o mancanti separano gli intervalli. Non è un test cluster-based e non implica significatività tra i campioni. Per ogni intervallo puoi andare al video, scaricare il **frame PNG al p minimo** o una **clip dal primo all’ultimo campione significativo**. Gli istanti isolati offrono il frame, senza inventare una durata significativa. Il riepilogo per epoca non produce intervalli temporali.
 

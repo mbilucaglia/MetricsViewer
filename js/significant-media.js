@@ -1,9 +1,9 @@
 (function(root){
   'use strict';
-  function intervals(points,step){
+  function intervals(points,step,alpha=.05){
     const out=[];let run=null,previous=null;
     for(const p of [...points].sort((a,b)=>a.time-b.time)){
-      const significant=Number.isFinite(p.time)&&Number.isFinite(p.pAdjusted)&&p.pAdjusted<=.05;
+      const significant=Number.isFinite(p.time)&&Number.isFinite(p.pAdjusted)&&p.pAdjusted<=alpha;
       if(!significant){run=null;previous=null;continue;}
       const adjacent=run&&Number.isFinite(step)&&step>0&&Math.abs(p.time-previous-step)<=Math.max(1e-8,step*1e-5);
       if(!adjacent){run={start:p.time,end:p.time,count:0,minP:p.pAdjusted,peak:p.time};out.push(run);}
@@ -16,9 +16,9 @@
     return out;
   }
   // Display each sample's temporal cell; keep clip endpoints at measured instants.
-  function bands(points,step){
+  function bands(points,step,alpha){
     const half=Number.isFinite(step)&&step>0?step/2:0;
-    return intervals(points,step).map(range=>({...range,left:range.start-half,right:range.end+half}));
+    return intervals(points,step,alpha).map(range=>({...range,left:range.start-half,right:range.end+half}));
   }
   function rankIntervals(ranges){
     return ranges.slice().sort((a,b)=>(b.magnitude ?? -1)-(a.magnitude ?? -1)||a.start-b.start)
@@ -35,7 +35,7 @@
     time.className = 'preview-summary__time';
     time.textContent = formatEstimate(summary.time) + ' s';
     if (Number.isFinite(summary.pAdjusted)) {
-      const pLabel = summary.omnibus ? 'p globale corretto' : 'p corretto';
+      const pLabel = summary.cluster ? 'p del cluster' : summary.omnibus ? 'p globale corretto' : 'p corretto';
       time.textContent += ' · ' + pLabel + ' ' + formatEstimate(summary.pAdjusted);
     }
     const estimates = summary.estimates.map(({ label = 'Media', mean, halfWidth }) => {
@@ -100,13 +100,14 @@
     if (meta.view !== 'series') return;
     context = meta;
     const step = Number(meta.grid_step);
-    ranges = rankIntervals(intervals(points, step));
+    const alpha = meta.alpha ?? .05;
+    ranges = rankIntervals(intervals(points, step, alpha));
     if (describePoint) {
       const tolerance = step > 0 ? Math.min(step / 4, Math.max(1e-8, step * 1e-5)) : 0;
       // Statistical results are on the analysis grid. Keep their indices for matching the plotted estimates.
       const indices = new Map();
       for (const [index, point] of points.entries()) {
-        if (Number.isFinite(point.pAdjusted) && point.pAdjusted <= .05) indices.set(point.time, index);
+        if (Number.isFinite(point.pAdjusted) && point.pAdjusted <= alpha) indices.set(point.time, index);
       }
       summaryAt = time => {
         let index = indices.get(time);
@@ -126,7 +127,12 @@
     closeFloating();disposePlayers();rows.clear();$('significantMedia').hidden=floatingOnly;$('significantIntervals').replaceChildren();
     updateOpenAllButton();
     const available=!!root.MetricsVideo?.source(context.epoch);
-    $('mediaStatus').textContent=!ranges.length?(context.criterion?'Nessun istante trovato con questi criteri.':'Nessun istante significativo (p finale ≤ 0,05).'):!available?'Associa un video a questa epoca per estrarre frame e clip.':'';
+    const alpha = String(context.alpha ?? .05).replace('.', ',');
+    const emptyMessage = context.criterion ? 'Nessun istante trovato con questi criteri.'
+      : context.correction === 'cluster-mass' ? 'Nessun cluster significativo (p ≤ ' + alpha + ').'
+      : 'Nessun istante significativo (p finale ≤ ' + alpha + ').';
+    $('mediaStatus').textContent = !ranges.length ? emptyMessage
+      : !available ? 'Associa un video a questa epoca per estrarre frame e clip.' : '';
     for(const [index,r] of ranges.entries()){
       const row=document.createElement('div');row.className='significant-interval';row.tabIndex=-1;row.dataset.index=index;row.dataset.start=r.start;row.dataset.end=r.end;
       const data = r.summary ?? summaryAt?.(r.peak);

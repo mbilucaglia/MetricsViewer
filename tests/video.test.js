@@ -31,7 +31,7 @@ function setup(){
   const cancel=()=>dialog.dismiss.onclick();
   function choose(index,name){const input=get('videoAssignments').children[index].children[0].children[0];input.files=[{name}];input.handlers.change();}
   function assign(index,name){open();choose(index,name);confirm();}
-  function chart(){const svg=new Element();api.attach(svg,{min:5,max:15,left:50,top:20,width:100,height:100});return svg;}
+  function chart(options){const svg=new Element();api.attach(svg,{min:5,max:15,left:50,top:20,width:100,height:100,...options});return svg;}
   return {api,get,video,assign,choose,open,confirm,cancel,chart,revoked,frames,handlers};
 }
 test('per-epoch video switching, replacement, removal and dataset cleanup',()=>{
@@ -65,6 +65,37 @@ test('playback updates all cursors and only the time axis seeks the video',()=>{
   t.api.setContext(['A'],'A','summary');assert.equal(t.video.paused,true);assert.equal(t.frames.size,0);assert.equal(t.get('videoCard').hidden,true);
   t.api.setContext(['A'],'A','series');t.video.handlers.error();assert.match(t.get('videoError').textContent,/non riproducibile/);
 });
+test('the overview marks the video time and following runs during playback only',()=>{
+  const t=setup();
+  t.api.setContext(['A'],'A','series');
+  t.assign(0,'a.mp4');
+  const followed=[];
+  const svg=t.chart({
+    overview:{min:5,max:20,x:50,y:180,width:150,height:40},
+    followPlayback:(time,now)=>followed.push([time,now])
+  });
+  const overview=svg.children[3];
+  assert.equal(overview.attrs.visibility,'hidden');
+  t.video.currentTime=10;
+  t.video.handlers.timeupdate();
+  assert.equal(overview.attrs.x1,'100');
+  assert.deepEqual(followed,[]);
+  t.video.paused=false;
+  t.video.handlers.play();
+  t.video.currentTime=16;
+  const [id,tick]=t.frames.entries().next().value;
+  t.frames.delete(id);
+  tick(125);
+  assert.equal(svg.children[0].attrs.visibility,'hidden');
+  assert.equal(overview.attrs.x1,'160');
+  assert.deepEqual(followed,[[16,125]]);
+  t.video.pause();
+  t.video.currentTime=3;
+  t.video.handlers.seeked();
+  assert.equal(overview.attrs.visibility,'hidden');
+  assert.deepEqual(followed,[[16,125]]);
+});
+
 test('bundled videos replace uploads, switch by epoch and never revoke file URLs',()=>{
   const t=setup();t.api.setContext(['A','B'],'A','series');t.assign(0,'upload.mp4');const uploaded=t.video.src;
   const items=[{epoch:'A',url:'file:///a.mp4',name:'a.mp4'},{epoch:'B',url:'file:///b.mp4',name:'b.mp4'}];

@@ -9,157 +9,366 @@
       return min + (max - min) * fraction;
     }
 
-    function axisPanner(axis, zoom, domain, visible, categories, redraw) {
+    const axes = ['x', 'y'];
+    const axisHitDepth = 27;
+
+    function panner(svg, axis, box, domain, visible, traces, dataY, categories, view, onPreview = null) {
       const horizontal = axis === 'x';
-      const label = axis.toUpperCase();
-      const extent = domain[1] - domain[0];
-      const scale = 1000;
-      const endpoints = visible.map(value => (value - domain[0]) / extent * scale);
-      const minimumSteps = Math.min(
-        endpoints[1] - endpoints[0],
-        horizontal && categories ? scale / extent : 1
-      );
-      const panner = node('div', undefined, 'chart-panner chart-panner--' + axis);
-      panner.setAttribute('role', 'group');
-      panner.setAttribute('aria-label', 'Zoom e spostamento asse ' + label);
-      const track = node('div', undefined, 'chart-panner__track');
-      const range = node('div', undefined, 'chart-panner__window');
-      track.append(range);
-      const handles = ['Minimo', 'Massimo'].map((name, index) => {
-        const input = node('input');
-        input.type = 'range';
-        input.min = '0';
-        input.max = String(scale);
-        input.value = String(endpoints[index]);
-        input.step = 'any';
-        input.disabled = minimumSteps >= scale;
-        input.dataset.zoomControl = axis + '-' + index;
-        input.setAttribute('aria-label', name + ' visibile asse ' + label);
-        track.append(input);
-        return input;
-      });
-      function preview() {
-        track.style.setProperty('--window-start', endpoints[0] / scale * 100 + '%');
-        track.style.setProperty('--window-size', (endpoints[1] - endpoints[0]) / scale * 100 + '%');
-        handles.forEach((handle, index) => {
-          handle.value = String(endpoints[index]);
-          if (!horizontal || !categories) {
-            const value = fmt(axisValue(domain, endpoints[index] / scale));
-            handle.setAttribute('aria-valuetext', horizontal ? value + ' s' : value);
+      const { x, y, width, height } = box;
+      const span = domain[1] - domain[0];
+      const fraction = value => (value - domain[0]) / span;
+      const initial = visible.map(value => Math.max(0, Math.min(1, fraction(value))));
+      let endpoints = [...initial];
+      const minSpan = Math.min(initial[1] - initial[0], 1e-6);
+      const control = part => 'panner-' + axis + '-' + part;
+      const group = svgEl('g', { class: 'chart-panner', role: 'group',
+        'aria-label': 'Panner asse ' + axis.toUpperCase(), 'data-panner-axis': axis });
+      const track = svgEl('rect', { x, y, width, height, class: 'chart-panner__track' });
+      const segment = (low, high) => horizontal
+        ? { x: x + low * width, y, width: (high - low) * width, height }
+        : { x, y: y + (1 - high) * height, width, height: (high - low) * height };
+      const place = (element, attrs) => {
+        for (const [key, value] of Object.entries(attrs)) element.setAttribute(key, value);
+      };
+      group.append(track);
+
+      if (horizontal) {
+        const preview = svgEl('g', { class: 'chart-panner__overview', 'aria-hidden': 'true' });
+        const previewY = value => y + height - 2 - (value - dataY[0]) / (dataY[1] - dataY[0]) * (height - 4);
+        for (const tr of traces) {
+          if (tr.isolationOnly) continue;
+          const stride = Math.max(1, Math.floor(tr.x.length / Math.max(160, width)));
+          let path = '', open = false;
+          for (let i = 0; i < tr.x.length; i++) {
+            if (!C.finite(tr.y[i])) { open = false; continue; }
+            if (i % stride && i !== tr.x.length - 1) continue;
+            const px = x + fraction(tr.x[i]) * width;
+            if (px < x || px > x + width) { open = false; continue; }
+            const py = previewY(tr.y[i]);
+            if (categories || tr.x.length === 1) {
+              preview.append(svgEl('circle', { cx: px, cy: py, r: 1.6 }));
+            } else {
+              path += (open ? 'L' : 'M') + px.toFixed(2) + ',' + py.toFixed(2);
+              open = true;
+            }
           }
-        });
-      }
-      function apply(control) {
-        zoom[axis] = endpoints.map(value => axisValue(domain, value / scale));
-        redraw(control);
-      }
-      handles.forEach((handle, index) => {
-        handle.oninput = () => {
-          endpoints[index] = index === 0
-            ? Math.min(Number(handle.value), endpoints[1] - minimumSteps)
-            : Math.max(Number(handle.value), endpoints[0] + minimumSteps);
-          preview();
-        };
-        handle.onchange = () => apply(handle.dataset.zoomControl);
-      });
-      let drag = null;
-      track.addEventListener('pointerdown', event => {
-        const index = handles.indexOf(event.target);
-        const isPan = event.target === range && endpoints[1] - endpoints[0] < scale;
-        if (!event.isPrimary || event.button !== 0 || (!isPan && (index < 0 || minimumSteps >= scale))) return;
-        event.preventDefault();
-        if (!isPan) handles[index].focus({ preventScroll: true });
-        track.setPointerCapture(event.pointerId);
-        drag = { id: event.pointerId, start: horizontal ? event.clientX : -event.clientY,
-          initial: [...endpoints], index, isPan };
-      });
-      track.addEventListener('pointermove', event => {
-        if (drag?.id !== event.pointerId) return;
-        const rect = track.getBoundingClientRect();
-        const distance = (horizontal ? event.clientX : -event.clientY) - drag.start;
-        const offset = distance / (horizontal ? rect.width : rect.height) * scale;
-        const [lower, upper] = drag.initial;
-        if (drag.isPan) {
-          const size = upper - lower;
-          endpoints[0] = Math.max(0, Math.min(scale - size, lower + offset));
-          endpoints[1] = endpoints[0] + size;
-        } else if (drag.index === 0) {
-          endpoints[0] = Math.max(0, Math.min(upper - minimumSteps, lower + offset));
-        } else {
-          endpoints[1] = Math.min(scale, Math.max(lower + minimumSteps, upper + offset));
+          if (path) preview.append(svgEl('path', { d: path, fill: 'none',
+            'stroke-width': tr.bold ? 1.6 : .75, opacity: tr.bold ? .85 : .42 }));
         }
-        preview();
-      });
-      track.addEventListener('pointerup', event => {
-        if (drag?.id !== event.pointerId) return;
-        const changed = drag.initial.some((position, index) => position !== endpoints[index]);
-        const control = handles[drag.index]?.dataset.zoomControl;
-        drag = null;
-        if (changed) apply(control);
-      });
-      for (const name of ['pointercancel', 'lostpointercapture']) {
-        track.addEventListener(name, event => {
-          if (drag?.id !== event.pointerId) return;
-          [endpoints[0], endpoints[1]] = drag.initial;
-          drag = null;
-          preview();
+        group.append(preview);
+      } else {
+        const bins = Array(Math.max(16, Math.min(64, Math.floor(height / 5)))).fill(0);
+        const subjects = traces.filter(tr => tr.subjectId);
+        for (const tr of subjects.length ? subjects : traces) {
+          for (const value of tr.y) {
+            if (!C.finite(value)) continue;
+            const f = fraction(value);
+            if (f >= 0 && f <= 1) bins[Math.min(bins.length - 1, Math.floor(f * bins.length))]++;
+          }
+        }
+        const peak = Math.max(1, ...bins);
+        const histogram = svgEl('g', { class: 'chart-panner__histogram', 'aria-hidden': 'true' });
+        bins.forEach((count, index) => {
+          if (!count) return;
+          const bar = segment((index + .08) / bins.length, (index + .92) / bins.length);
+          bar.width = (width - 3) * count / peak;
+          histogram.append(svgEl('rect', bar));
+        });
+        group.append(histogram);
+      }
+
+      const masks = [0, 1].map(() => svgEl('rect', { class: 'chart-panner__mask', 'aria-hidden': 'true' }));
+      const slider = (label, part, cls) => svgEl('rect', { class: cls, role: 'slider', tabindex: 0,
+        'aria-label': label + ' asse ' + axis.toUpperCase(), 'aria-orientation': horizontal ? 'horizontal' : 'vertical',
+        'data-zoom-control': control(part) });
+      const frame = slider('Sposta finestra', 'window', 'chart-panner__window');
+      const handles = ['Minimo visibile', 'Massimo visibile'].map((label, index) =>
+        slider(label, index, 'chart-panner__handle'));
+      const grips = handles.map(() => svgEl('rect', { class: 'chart-panner__grip', rx: 1,
+        'aria-hidden': 'true' }));
+      group.append(...masks, frame, ...grips, ...handles);
+
+      function selectedRange() {
+        return endpoints.map((value, index) => value === initial[index] ? visible[index] : axisValue(domain, value));
+      }
+
+      function update() {
+        const [low, high] = endpoints;
+        place(masks[0], segment(0, low));
+        place(masks[1], segment(high, 1));
+        place(frame, segment(low, high));
+        place(frame, { 'aria-valuemin': domain[0], 'aria-valuemax': axisValue(domain, 1 - high + low),
+          'aria-valuenow': axisValue(domain, low),
+          'aria-valuetext': fmt(axisValue(domain, low)) + ' – ' + fmt(axisValue(domain, high)) });
+        const crowded = (high - low) * (horizontal ? width : height) < 12;
+        handles.forEach((handle, index) => {
+          const position = endpoints[index];
+          const offset = crowded ? index ? -1 : 1 : 0;
+          if (horizontal) {
+            const cx = Math.round(x + position * width);
+            const top = y + Math.round(height / 4) * (1 + offset);
+            const barHeight = Math.round(height / (crowded ? 4 : 2));
+            place(grips[index], { x: cx - 2, y: top, width: 4, height: barHeight });
+            place(handle, { x: cx - 5, y: crowded ? top : y, width: 10, height: crowded ? barHeight : height });
+          } else {
+            const cy = Math.round(y + (1 - position) * height);
+            const left = x + Math.round(width / 4) * (1 - offset);
+            const barWidth = Math.round(width / (crowded ? 4 : 2));
+            place(grips[index], { x: left, y: cy - 2, width: barWidth, height: 4 });
+            place(handle, { x: crowded ? left : x, y: cy - 5, width: crowded ? barWidth : width, height: 10 });
+          }
+          place(handle, { 'aria-valuemin': index ? axisValue(domain, low + minSpan) : domain[0],
+            'aria-valuemax': index ? domain[1] : axisValue(domain, high - minSpan),
+            'aria-valuenow': axisValue(domain, position), 'aria-valuetext': fmt(axisValue(domain, position)) });
         });
       }
-      preview();
-      panner.append(track);
-      return panner;
+
+      function apply(part) {
+        view.commit({ [axis]: selectedRange() }, control(part));
+      }
+
+      function change(part, offset, from) {
+        const [low, high] = from;
+        if (part === 'window') {
+          const length = high - low;
+          const first = Math.max(0, Math.min(1 - length, low + offset));
+          endpoints = [first, first + length];
+        } else if (part === 0) {
+          endpoints = [Math.max(0, Math.min(high - minSpan, low + offset)), high];
+        } else {
+          endpoints = [low, Math.min(1, Math.max(low + minSpan, high + offset))];
+        }
+        update();
+        onPreview?.(selectedRange());
+      }
+
+      [frame, ...handles].forEach((element, index) => {
+        const part = index === 0 ? 'window' : index - 1;
+        element.addEventListener('keydown', event => {
+          const amount = { ArrowLeft: -.02, ArrowDown: -.02, ArrowRight: .02, ArrowUp: .02,
+            PageDown: -.1, PageUp: .1, Home: -1, End: 1 }[event.key];
+          if (amount === undefined) return;
+          event.preventDefault();
+          change(part, amount, initial);
+          apply(part);
+        });
+      });
+
+      let drag;
+      function position(event) {
+        const rect = track.getBoundingClientRect();
+        return horizontal ? (event.clientX - rect.left) / rect.width : (rect.bottom - event.clientY) / rect.height;
+      }
+      group.addEventListener('pointerdown', event => {
+        if (event.button !== 0 || !event.isPrimary || drag) return;
+        const handle = handles.indexOf(event.target);
+        const part = handle < 0 ? 'window' : handle;
+        const start = position(event);
+        event.preventDefault();
+        event.stopPropagation();
+        (part === 'window' ? frame : handles[part]).focus({ preventScroll: true });
+        if (!group.isConnected) return;
+        group.setPointerCapture(event.pointerId);
+        svg.classList.add('is-view-dragging');
+        const outside = event.target === track;
+        if (outside) change(part, start - (initial[0] + initial[1]) / 2, initial);
+        drag = { id: event.pointerId, part, start, from: [...endpoints] };
+      });
+      group.addEventListener('pointermove', event => {
+        if (drag?.id === event.pointerId) change(drag.part, position(event) - drag.start, drag.from);
+      });
+      group.addEventListener('pointerup', event => {
+        if (drag?.id !== event.pointerId) return;
+        const { part } = drag;
+        drag = null;
+        svg.classList.remove('is-view-dragging');
+        apply(part);
+      });
+      group.addEventListener('lostpointercapture', () => {
+        if (!drag) return;
+        drag = null;
+        endpoints = [...initial];
+        svg.classList.remove('is-view-dragging');
+        update();
+        onPreview?.(visible);
+      });
+      group.addEventListener('click', event => event.stopPropagation());
+      update();
+      svg.append(group);
     }
 
-    function zoomTools(zoom, redraw) {
-      const tools = node('div', undefined, 'chart-zoom-tools');
-      tools.setAttribute('role', 'group');
-      tools.setAttribute('aria-label', 'Controlli di zoom');
-      function auto(axis) {
-        const label = axis.toUpperCase();
-          const auto = node('button', 'Auto ' + label);
-          auto.setAttribute('aria-label', 'Scala automatica asse ' + label);
-          auto.title = 'Scala automatica asse ' + label;
-          auto.dataset.zoomControl = axis + '-auto';
-          auto.setAttribute('aria-disabled', String(zoom[axis] === null));
-          auto.onclick = () => {
-            if (zoom[axis] === null) return;
-            zoom[axis] = null;
-            redraw(auto.dataset.zoomControl);
-          };
-        return auto;
+    function zoomTools() {
+      const element = node('div', undefined, 'chart-navigation');
+      element.setAttribute('role', 'group');
+      element.setAttribute('aria-label', 'Navigazione del grafico');
+      const limits = node('div', undefined, 'chart-navigation__limits');
+      limits.setAttribute('role', 'group');
+      limits.setAttribute('aria-label', 'Limiti visibili dell’asse Y');
+      const paths = {
+        lower: 'M8 2v9m-3-3 3 3 3-3M3 14h10',
+        upper: 'M8 14V5m-3 3 3-3 3 3M3 2h10',
+        auto: 'M5 3h14M5 21h14M12 10V6m-3 3 3-3 3 3m-3 5v4m-3-3 3 3 3-3',
+        lens: 'M15.5 15.5 21 21M17.5 10.5a7 7 0 1 1-14 0 7 7 0 0 1 14 0ZM7.5 10.5h6m-3-3v6',
+        reset: 'M5 10.5a7.5 7.5 0 1 1 1.9 7.4M5 5v5.5h5.5'
+      };
+      const icon = (name, size = 24) => {
+        const svg = svgEl('svg', { viewBox: '0 0 ' + size + ' ' + size, 'aria-hidden': 'true' });
+        svg.append(svgEl('path', { d: paths[name] }));
+        return svg;
+      };
+      let state;
+
+      const inputs = ['inferiore', 'superiore'].map((direction, index) => {
+        const field = node('label');
+        const input = node('input');
+        input.type = 'text';
+        input.inputMode = 'decimal';
+        input.autocomplete = 'off';
+        input.dataset.zoomControl = 'y-limit-' + index;
+        input.setAttribute('aria-label', 'Limite ' + direction + ' dell’asse Y');
+        input.title = 'Limite ' + direction + ' dell’asse Y';
+        field.append(icon(index ? 'upper' : 'lower', 16), input);
+        limits.append(field);
+        input.oninput = () => {
+          input.setCustomValidity('');
+          input.setAttribute('aria-invalid', 'false');
+        };
+        input.onchange = () => {
+          const draft = input.value.trim().replace(',', '.');
+          const current = state.visible.y;
+          const candidate = [...current];
+          candidate[index] = draft === formatLimit(current, index) ? current[index] : Number(draft);
+          if (!draft || !state.view.valid(candidate)) {
+            input.setCustomValidity('Inserisci un limite numerico valido. Il minimo deve essere inferiore al massimo.');
+            input.setAttribute('aria-invalid', 'true');
+            input.reportValidity();
+            return;
+          }
+          input.setCustomValidity('');
+          input.setAttribute('aria-invalid', 'false');
+          state.view.commit({ y: candidate });
+        };
+        input.onkeydown = event => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            input.blur();
+          } else if (event.key === 'Escape') {
+            event.preventDefault();
+            sync(state.visible.y, true);
+          }
+        };
+        return input;
+      });
+
+      function formatLimit(range, index) {
+        const value = range[index];
+        const digits = Math.ceil(Math.log10(Math.abs(value)) - Math.log10(range[1] - range[0])) + 3;
+        return String(Number(value.toPrecision(Math.min(17, Math.max(6, digits)))));
       }
-      function iconButton(id, label, paths, action) {
-        const button = node('button');
-        button.dataset.zoomControl = id;
-        button.title = label;
-        button.setAttribute('aria-label', label);
-        const icon = svgEl('svg', {
-          viewBox: '0 0 24 24', class: 'chart-tool-icon', 'aria-hidden': 'true',
-          fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8,
-          'stroke-linecap': 'round', 'stroke-linejoin': 'round'
+
+      function sync(range, force = false) {
+        inputs.forEach((input, index) => {
+          if (!force && input === document.activeElement) return;
+          input.value = formatLimit(range, index);
+          input.setCustomValidity?.('');
+          input.setAttribute('aria-invalid', 'false');
         });
-        for (const path of paths) icon.append(svgEl('path', { d: path }));
-        button.append(icon);
-        button.onclick = action;
-        return button;
       }
-      const selection = iconButton('selection', 'Zoom a selezione',
-        ['M15.5 15.5 21 21', 'M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z', 'M7 10h6m-3-3v6'],
-        () => {
-          zoom.selection = !zoom.selection;
-          redraw('selection');
-        });
-      selection.setAttribute('aria-pressed', String(zoom.selection));
-      const reset = iconButton('reset', 'Ripristina entrambi gli assi',
-        ['M4 11a8 8 0 1 1 2 6', 'M4 5v6h6'],
-        () => {
-          if (zoom.x === null && zoom.y === null) return;
-          zoom.x = zoom.y = null;
-          redraw('reset');
-        });
-      reset.setAttribute('aria-disabled', String(zoom.x === null && zoom.y === null));
-      tools.append(auto('x'), selection, reset, auto('y'));
-      return tools;
+
+      function button(name, id, label, action) {
+        const control = node('button');
+        control.dataset.zoomControl = id;
+        control.title = label;
+        control.setAttribute('aria-label', label);
+        control.append(icon(name));
+        control.onclick = action;
+        element.append(control);
+        return control;
+      }
+      element.append(limits);
+      button('auto', 'y-auto', 'Scala automatica Y', () => state.view.resetY('y-auto'));
+      const lens = button('lens', 'lens', 'Zoom a selezione', () => {
+        state.zoom.selecting = !state.zoom.selecting;
+        lens.setAttribute('aria-pressed', String(state.zoom.selecting));
+        state.svg.classList.toggle('is-zoom-mode', state.zoom.selecting);
+      });
+      button('reset', 'reset', 'Ripristina la vista', () => state.view.reset('reset'));
+
+      return {
+        element, sync,
+        update(visible, view, zoom, svg) {
+          state = { visible, view, zoom, svg };
+          lens.setAttribute('aria-pressed', String(zoom.selecting));
+          svg.classList.toggle('is-zoom-mode', zoom.selecting);
+          sync(visible.y);
+        }
+      };
+    }
+
+    function createView(zoom, visible, automatic, categories, redraw) {
+      function valid([low, high]) {
+        const span = high - low;
+        const precision = Math.max(Math.abs(low), Math.abs(high)) * Number.EPSILON * 8;
+        return Number.isFinite(span) && span > Math.max(precision, Number.MIN_VALUE * 5);
+      }
+
+      function range(axis, low, high) {
+        if (axis === 'x') {
+          const [min, max] = automatic.x;
+          const width = high - low;
+          if (categories) {
+            const span = Math.max(1, Math.min(max - min, width));
+            const first = Math.max(min, Math.min(max - span, low + (width - span) / 2));
+            return [first, first + span];
+          }
+          if (low < min) return [min, min + width];
+        }
+        return [low, high];
+      }
+
+      function commit(next, control) {
+        if (next.x && valid(next.x)) next.x = range('x', ...next.x);
+        const changes = axes.filter(axis => next[axis] && valid(next[axis]) &&
+          next[axis].some((value, index) => value !== visible[axis][index]));
+        for (const axis of changes) zoom[axis] = next[axis];
+        if (changes.includes('y')) {
+          const basis = zoom.yDomain ?? automatic.y;
+          const extent = [Math.min(basis[0], next.y[0]), Math.max(basis[1], next.y[1])];
+          if (valid(extent) && extent.some((value, index) => value !== basis[index])) zoom.yDomain = extent;
+        }
+        if (changes.length) redraw(control);
+        return changes.length > 0;
+      }
+
+      function scale(factor, control, anchors = { x: .5, y: .5 }, scope = axes) {
+        const next = {};
+        for (const axis of scope) {
+          const current = visible[axis];
+          const anchor = axisValue(current, anchors[axis]);
+          next[axis] = range(axis, ...current.map(value => anchor + (value - anchor) * factor));
+        }
+        commit(next, control);
+      }
+
+      function translate(axis, fraction) {
+        const current = visible[axis];
+        const amount = (current[1] - current[0]) * fraction;
+        const next = range(axis, current[0] + amount, current[1] + amount);
+        return valid(next) ? next : current;
+      }
+
+      function resetY(control) {
+        zoom.y = zoom.yDomain = null;
+        redraw(control);
+      }
+
+      function reset(control) {
+        zoom.x = null;
+        zoom.selecting = false;
+        resetY(control);
+      }
+
+      return { valid, range, commit, scale, translate, resetY, reset };
     }
 
     function enableSubjectSelection(element, subjectId, label) {
@@ -178,13 +387,17 @@
       });
     }
 
-    function enableDragZoom(svg, bounds, zoom, visible, domain, categories, redraw) {
+    function enableNavigation(svg, bounds, zoom, visible, view, traceContent) {
+      const { left, top, width, height } = bounds;
       const selection = svgEl('rect', { class: 'chart-zoom-selection', 'aria-hidden': 'true' });
-      const threshold = 6;
       let drag = null;
       let suppressClick = false;
+      let wheelFactor = 1;
+      let wheelFrame = null;
+      let wheelAnchor;
+      let wheelScope;
 
-      function location(event) {
+      function locate(event) {
         const matrix = svg.getScreenCTM();
         if (!matrix) return null;
         const point = svg.createSVGPoint();
@@ -193,93 +406,165 @@
         return point.matrixTransform(matrix.inverse());
       }
 
-      function area(event) {
-        const point = location(event);
+      function scopeAt(point) {
         if (!point) return null;
-        const { left, top, width, height } = bounds;
+        const { x, y } = point;
+        const withinX = x >= left && x <= left + width;
+        const withinY = y >= top && y <= top + height;
+        if (withinX && y > top + height && y <= top + height + axisHitDepth) return ['x'];
+        if (withinY && x >= 0 && x < left) return ['y'];
+        return withinX && withinY ? axes : null;
+      }
+
+      svg.dataset.zoomControl = 'plot';
+      svg.setAttribute('tabindex', '0');
+      svg.setAttribute('aria-keyshortcuts', 'ArrowLeft ArrowRight ArrowUp ArrowDown + - Home');
+      svg.addEventListener('keydown', event => {
+        if (event.target !== svg || event.ctrlKey || event.metaKey || event.altKey) return;
+        const offset = { ArrowLeft: ['x', -.15], ArrowRight: ['x', .15],
+          ArrowDown: ['y', -.15], ArrowUp: ['y', .15] }[event.key];
+        if (offset) {
+          view.commit({ [offset[0]]: view.translate(...offset) }, 'plot');
+        } else if (event.key === '+' || event.key === '-' || event.key === '−') {
+          view.scale(event.key === '+' ? 1 / 1.4 : 1.4, 'plot');
+        } else if (event.key === 'Home') {
+          view.reset('plot');
+        } else return;
+        event.preventDefault();
+      });
+
+      svg.addEventListener('wheel', event => {
+        if (event.ctrlKey || event.metaKey || drag || event.target.closest('.video-playhead-axis')) return;
+        const point = locate(event);
+        const scope = scopeAt(point);
+        if (!scope || (scope === axes && !event.shiftKey && document.activeElement !== svg)) return;
+        event.preventDefault();
+        const multiplier = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 160 : 1;
+        const delta = Math.max(-200, Math.min(200, (event.deltaY || event.deltaX) * multiplier));
+        wheelFactor = Math.max(.5, Math.min(2, wheelFactor * Math.exp(delta * .0025)));
+        wheelAnchor = { x: (point.x - left) / width, y: 1 - (point.y - top) / height };
+        wheelScope = scope;
+        if (wheelFrame !== null) return;
+        wheelFrame = requestAnimationFrame(() => {
+          wheelFrame = null;
+          const factor = wheelFactor;
+          wheelFactor = 1;
+          if (svg.isConnected && !drag) view.scale(factor, undefined, wheelAnchor, wheelScope);
+        });
+      }, { passive: false });
+
+      function gesture(event) {
+        const point = locate(event);
+        if (!point) return null;
+        const movedX = drag.scope.includes('x') && Math.abs(event.clientX - drag.clientX) >= 5;
+        const movedY = drag.scope.includes('y') && Math.abs(event.clientY - drag.clientY) >= 5;
+        const next = {};
+        if (!drag.selecting) {
+          if (movedX) next.x = view.translate('x', (drag.start.x - point.x) / width);
+          if (movedY) next.y = view.translate('y', (point.y - drag.start.y) / height);
+          return { next };
+        }
+
         const x = Math.max(left, Math.min(left + width, point.x));
         const y = Math.max(top, Math.min(top + height, point.y));
-        const across = x !== drag.start.x && Math.abs(event.clientX - drag.clientX) >= threshold;
-        const down = y !== drag.start.y && Math.abs(event.clientY - drag.clientY) >= threshold;
-        return {
-          across, down,
-          left: across ? Math.min(x, drag.start.x) : left,
-          right: across ? Math.max(x, drag.start.x) : left + width,
-          top: down ? Math.min(y, drag.start.y) : top,
-          bottom: down ? Math.max(y, drag.start.y) : top + height
+        const box = {
+          left: movedX ? Math.min(x, drag.start.x) : left,
+          right: movedX ? Math.max(x, drag.start.x) : left + width,
+          top: movedY ? Math.min(y, drag.start.y) : top,
+          bottom: movedY ? Math.max(y, drag.start.y) : top + height
         };
+        if (movedX && box.right > box.left) next.x = view.range('x',
+          axisValue(visible.x, (box.left - left) / width), axisValue(visible.x, (box.right - left) / width));
+        if (movedY && box.bottom > box.top) next.y = view.range('y',
+          axisValue(visible.y, 1 - (box.bottom - top) / height), axisValue(visible.y, 1 - (box.top - top) / height));
+        return { box, next };
       }
 
       function cancel() {
         drag = null;
         document.removeEventListener('pointermove', move);
         document.removeEventListener('pointerup', finish);
-        document.removeEventListener('pointercancel', cancel);
+        document.removeEventListener('pointercancel', cancelPointer);
+        document.removeEventListener('keydown', cancelKey);
         window.removeEventListener('blur', cancel);
         selection.remove();
-        svg.classList.remove('is-selecting');
+        traceContent.removeAttribute('transform');
+        svg.classList.remove('is-selecting', 'is-panning', 'is-view-dragging');
       }
 
-      svg.addEventListener('pointerdown', event => {
-        if (!event.isPrimary || event.button !== 0 || event.pointerType === 'touch') return;
-        suppressClick = false;
-        const start = location(event);
-        const { left, top, width, height } = bounds;
-        if (!start || start.x < left || start.x > left + width || start.y < top || start.y > top + height) return;
+      function cancelPointer(event) {
+        if (drag?.id === event.pointerId) cancel();
+      }
+
+      function cancelKey(event) {
+        if (event.key !== 'Escape') return;
         event.preventDefault();
-        drag = { start, id: event.pointerId, clientX: event.clientX, clientY: event.clientY, active: false };
+        suppressClick = drag.active;
+        cancel();
+      }
+
+      svg.classList.add('chart-direct-navigation');
+      svg.addEventListener('pointerdown', event => {
+        if (!event.isPrimary || event.button !== 0 || drag) return;
+        suppressClick = false;
+        const start = locate(event);
+        const scope = scopeAt(start);
+        if (!scope || event.target.closest('.video-playhead-axis')) return;
+        event.preventDefault();
+        drag = {
+          start, scope, id: event.pointerId, clientX: event.clientX, clientY: event.clientY, active: false,
+          selecting: scope === axes && (zoom.selecting || event.shiftKey)
+        };
+        svg.classList.add('is-view-dragging');
         document.addEventListener('pointermove', move);
         document.addEventListener('pointerup', finish);
-        document.addEventListener('pointercancel', cancel);
+        document.addEventListener('pointercancel', cancelPointer);
+        document.addEventListener('keydown', cancelKey);
         window.addEventListener('blur', cancel);
       });
 
       function move(event) {
         if (drag?.id !== event.pointerId) return;
-        const box = area(event);
-        if (!box || (!box.across && !box.down && !drag.active)) return;
+        if (!svg.isConnected) { cancel(); return; }
+        const result = gesture(event);
+        if (!result || (!Object.keys(result.next).length && !drag.active)) return;
         if (!drag.active) {
           drag.active = true;
-          svg.append(selection);
-          svg.classList.add('is-selecting');
           $('tooltip').hidden = true;
+          svg.classList.add(drag.selecting ? 'is-selecting' : 'is-panning');
+          if (result.box) svg.append(selection);
         }
-        selection.setAttribute('x', box.left);
-        selection.setAttribute('y', box.top);
-        selection.setAttribute('width', box.right - box.left);
-        selection.setAttribute('height', box.bottom - box.top);
+        if (result.box) {
+          const box = result.box;
+          selection.setAttribute('x', box.left);
+          selection.setAttribute('y', box.top);
+          selection.setAttribute('width', box.right - box.left);
+          selection.setAttribute('height', box.bottom - box.top);
+        } else {
+          const { x = visible.x, y = visible.y } = result.next;
+          const dx = (visible.x[0] - x[0]) / (visible.x[1] - visible.x[0]) * width;
+          const dy = (y[0] - visible.y[0]) / (visible.y[1] - visible.y[0]) * height;
+          traceContent.setAttribute('transform', 'translate(' + dx + ' ' + dy + ')');
+        }
       }
 
       function finish(event) {
         if (drag?.id !== event.pointerId) return;
-        const box = area(event);
-        suppressClick = drag.active;
+        const result = svg.isConnected ? gesture(event) : null;
+        suppressClick = drag.active || Boolean(result && Object.keys(result.next).length);
         cancel();
-        if (!suppressClick || !box || (!box.across && !box.down)) return;
-        const { left, top, width, height } = bounds;
-        function select(axis, start, end) {
-          const current = visible[axis];
-          const isCategory = axis === 'x' && categories;
-          const minimum = Math.min(current[1] - current[0],
-            isCategory ? 1 : (domain[axis][1] - domain[axis][0]) * .001);
-          const low = axisValue(current, start);
-          const high = axisValue(current, end);
-          const span = Math.max(minimum, high - low);
-          let center = low + (high - low) / 2;
-          if (isCategory && span === 1) center = Math.round(center);
-          const first = Math.max(current[0], Math.min(current[1] - span, center - span / 2));
-          zoom[axis] = [first, first + span];
-        }
-        if (box.across) select('x', (box.left - left) / width, (box.right - left) / width);
-        if (box.down) select('y', 1 - (box.bottom - top) / height, 1 - (box.top - top) / height);
-        redraw();
+        if (suppressClick && result) view.commit(result.next);
       }
+
       svg.addEventListener('click', event => {
         if (suppressClick && event.detail > 0) {
           suppressClick = false;
           event.stopImmediatePropagation();
         }
       }, true);
+      svg.addEventListener('click', event => {
+        if (scopeAt(locate(event)) === axes) svg.focus({ preventScroll: true });
+      });
     }
 
     let momentMarkers = null;
@@ -292,20 +577,15 @@
       const viewport = chart.querySelector('.chart-plot-viewport');
       if (!saved || !viewport?.clientWidth || !viewport.clientHeight) return;
       const previous = plotSizes.get(target);
-      if (window.matchMedia('(min-width: 781px)').matches) {
-        const width = Math.max(620, viewport.clientWidth);
-        const height = Math.round(viewport.clientHeight * width / viewport.clientWidth);
-        if (width === previous?.width && height === previous?.height) return;
-        plotSizes.set(target, { width, height });
-      } else {
-        if (!previous) return;
-        plotSizes.delete(target);
-      }
+      const desktop = window.matchMedia('(min-width: 781px)').matches;
+      const width = Math.max(desktop ? 620 : 200, viewport.clientWidth);
+      const height = desktop ? Math.round(viewport.clientHeight * width / viewport.clientWidth) : null;
+      if (width === previous?.width && height === previous?.height) return;
+      plotSizes.set(target, { width, height });
       const focused = chart.contains(document.activeElement) ? document.activeElement : null;
       const previewIndex = focused?.getAttribute('data-preview-index');
       const zoomControl = focused?.getAttribute('data-zoom-control');
-      chart.replaceChildren();
-      plot(saved.traces, saved.options);
+      plot(saved.traces, saved.options, saved.rendered);
       if (target === 'chart') onZoom();
       if (previewIndex != null) chart.querySelector(`[data-preview-index="${previewIndex}"]`)?.focus({preventScroll:true});
       if (zoomControl) chart.querySelector(`[data-zoom-control="${zoomControl}"]`)?.focus({preventScroll:true});
@@ -335,10 +615,10 @@
       const { traces, options } = saved;
       $('chart').replaceChildren();plot(traces,options);
     }
-    function plot(traces,{categories=null,xLabel='Tempo dall’inizio dell’epoca [s]',hover=null,target='chart',title=null,bars=false,comparisons=[],significancePoints=[],significanceStep=null}={}){
+    function plot(traces,{categories=null,xLabel='Tempo dall’inizio dell’epoca [s]',hover=null,target='chart',title=null,bars=false,comparisons=[],significancePoints=[],significanceStep=null,significanceRanges=null,pThresholds={single:.05,double:.01,triple:.001}}={}, rendered = null){
       const chart=$(target);
       const saved = { traces, options: {
-        categories, xLabel, hover, target, title, bars, comparisons, significancePoints, significanceStep
+        categories, xLabel, hover, target, title, bars, comparisons, significancePoints, significanceStep, significanceRanges, pThresholds
       } };
       const usesMetricScale = target === 'chart' || target === 'statsGroupPlot';
       if (usesMetricScale) lastPlots.set(target, saved);
@@ -350,76 +630,142 @@
       let xmin=Infinity,xmax=-Infinity,ymin=Infinity,ymax=-Infinity;
       for(const tr of traces)for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i]))continue;const d=tr.band?.[i]||0;xmin=Math.min(xmin,tr.x[i]);xmax=Math.max(xmax,tr.x[i]);ymin=Math.min(ymin,tr.y[i]-d);ymax=Math.max(ymax,tr.y[i]+d);}
       if(!Number.isFinite(ymin)){chart.append(node('p','Nessun valore disponibile nell’intervallo selezionato.','empty-state'));return;}
-      if(categories){xmin=-0.5;xmax=categories.length-0.5;}else if(xmin===xmax){xmin-=.5;xmax+=.5;}
+      if (categories) {
+        xmin = -.5;
+        xmax = categories.length - .5;
+      } else if (xmin === xmax) {
+        if (!usesMetricScale) xmin -= .5;
+        xmax += .5;
+      }
       if(bars){ymin=Math.min(0,ymin);ymax=Math.max(0,ymax);}
       const pad=(ymax-ymin)*.12||Math.max(Math.abs(ymax)*.1,1);ymin-=pad;ymax+=pad;
       const automatic = { x: [xmin, xmax], y: [ymin, ymax] };
-      let zoom, visible, domain, redraw;
+      let zoom, visible, domain, view, redraw;
       if (usesMetricScale) {
         const key = getMode() + ':' + target;
-        if (!zoomByPlot.has(key)) zoomByPlot.set(key, { x: null, y: null, selection: false });
+        if (!zoomByPlot.has(key)) zoomByPlot.set(key, { x: null, y: null, yDomain: null, selecting: false, lastFollow: -Infinity });
         zoom = zoomByPlot.get(key);
         visible = { x: zoom.x ?? automatic.x, y: zoom.y ?? automatic.y };
-        // Keep both the data and the saved view reachable through the panners.
-        domain = Object.fromEntries(['x', 'y'].map(axis => [axis, [
-          Math.min(automatic[axis][0], visible[axis][0]),
-          Math.max(automatic[axis][1], visible[axis][1])
-        ]]));
-        [xmin, xmax] = visible.x;
-        [ymin, ymax] = visible.y;
-        redraw = control => {
+        redraw = (control = chart.contains(document.activeElement) ? document.activeElement.dataset.zoomControl : null) => {
           $('tooltip').hidden = true;
-          chart.replaceChildren();
-          plot(saved.traces, saved.options);
+          plot(saved.traces, saved.options, saved.rendered);
           if (target === 'chart') onZoom();
           if (control) chart.querySelector('[data-zoom-control="' + control + '"]')?.focus({ preventScroll: true });
         };
+        view = createView(zoom, visible, automatic, categories, redraw);
+        visible.x = view.range('x', ...visible.x);
+        [xmin, xmax] = visible.x;
+        [ymin, ymax] = visible.y;
+        domain = {};
+        for (const axis of axes) {
+          const bounds = axis === 'y' ? zoom.yDomain ?? automatic.y : automatic.x;
+          const extent = [Math.min(bounds[0], visible[axis][0]), Math.max(bounds[1], visible[axis][1])];
+          domain[axis] = view.valid(extent) ? extent : visible[axis];
+        }
       }
 
       const visibleCategory = index => index >= 0 && index >= xmin && index <= xmax;
-      const significant = comparisons.filter(c => Number.isFinite(c.pAdjusted) && c.pAdjusted <= .05 &&
-        categories && visibleCategory(categories.indexOf(c.epochA)) && visibleCategory(categories.indexOf(c.epochB)));
-      const bracketSpace = significant.length ? 32 + significant.length * 24 : 0;
       const size = plotSizes.get(target);
       const w = size?.width ?? 900;
+      const compact = w < 470;
+      const pannerSpace = usesMetricScale ? (compact ? 49 : 72) : 0;
+      const rightPannerSpace = usesMetricScale ? (compact ? 22 : 28) : 0;
+      const p = { l: compact ? 47 : 65, r: (compact ? 16 : 25) + rightPannerSpace,
+        t: 25, b: (categories ? 70 : 84) + pannerSpace };
+      const X = x => p.l + (x - xmin) / (xmax - xmin) * (w - p.l - p.r);
+      const barTraces = traces.filter(trace => !trace.subjectId);
+      const individualBars = traces.filter(trace => trace.isolationOnly);
+      const slotWidth = count => Math.min(88, (w - p.l - p.r) / (xmax - xmin) * .7 / Math.max(1, count));
+      const barCenter = (at, slot, count, width) => X(at) + (slot - (count - 1) / 2) * width;
+      const annotations = [];
+      if (categories && comparisons.length) {
+        const count = barTraces.length;
+        const width = slotWidth(count);
+        const barX = (index, group) => Number.isInteger(group) ? barCenter(index, group, count, width) : X(index);
+        for (const comparison of comparisons) {
+          const { pAdjusted, epochA, epochB, groupIndexA, groupIndexB } = comparison;
+          if (!Number.isFinite(pAdjusted) || pAdjusted < 0 || pAdjusted > 1) continue;
+          const a = categories.indexOf(epochA), b = categories.indexOf(epochB);
+          if (!visibleCategory(a) || !visibleCategory(b)) continue;
+          const xa = barX(a, groupIndexA), xb = barX(b, groupIndexB);
+          const center = (xa + xb) / 2;
+          annotations.push({ comparison, xa, xb, center,
+            left: Math.min(xa, xb, center - 18), right: Math.max(xa, xb, center + 18) });
+        }
+      }
+      // Reuse a row for annotations that do not overlap horizontally.
+      annotations.sort((a, b) => (a.right - a.left) - (b.right - b.left) || a.left - b.left);
+      const lanes = [];
+      for (const annotation of annotations) {
+        const { left, right } = annotation;
+        let lane = lanes.findIndex(row => row.every(item => right + 6 < item.left || left > item.right + 6));
+        if (lane === -1) {
+          lane = lanes.length;
+          lanes.push([]);
+        }
+        lanes[lane].push(annotation);
+        annotation.lane = lane;
+      }
+      const bracketSpace = lanes.length ? 12 + lanes.length * 24 : 0;
+      p.t += bracketSpace;
       // Reserve plot space when many annotations need to stack above the bars.
-      const minHeight = bracketSpace ? bracketSpace + 240 : 140;
-      const h = size ? Math.max(size.height, minHeight) : 410 + bracketSpace;
-      const p = {l:65,r:25,t:25+bracketSpace,b:categories?70:84};
-      const X=x=>p.l+(x-xmin)/(xmax-xmin)*(w-p.l-p.r),Y=y=>h-p.b-(y-ymin)/(ymax-ymin)*(h-p.t-p.b);
+      const minHeight = (bracketSpace ? bracketSpace + 240 : 140) + pannerSpace;
+      const h = size?.height == null ? (compact ? 306 : 410) + bracketSpace + pannerSpace : Math.max(size.height, minHeight);
+      const Y = y => h - p.b - (y - ymin) / (ymax - ymin) * (h - p.t - p.b);
       const hasVideoCursor = !categories && getMode() === 'series';
-      const svg=svgEl('svg',{viewBox:`0 0 ${w} ${h}`,role:hasVideoCursor||(target==='chart'&&(momentMarkers||traces.some(t=>t.subjectId)))||significancePoints.length?'group':'img','aria-label':title||$('chartTitle').textContent});
-      if (size && h > size.height) svg.classList.add('chart-overflow');
-      if (zoom?.selection) {
-        svg.classList.add('chart-drag-zoom');
-        enableDragZoom(svg, { left: p.l, top: p.t, width: w - p.l - p.r, height: h - p.t - p.b }, zoom, visible, domain, categories, redraw);
+      const svg=svgEl('svg',{viewBox:`0 0 ${w} ${h}`,role:usesMetricScale||hasVideoCursor||(target==='chart'&&(momentMarkers||traces.some(t=>t.subjectId)))||significancePoints.length||significanceRanges?.length||annotations.length?'group':'img','aria-label':title||$('chartTitle').textContent});
+      if (size?.height != null && h > size.height) svg.classList.add('chart-overflow');
+      if (usesMetricScale) {
+        svg.append(
+          svgEl('rect', { x: p.l, y: h - p.b, width: w - p.l - p.r, height: axisHitDepth,
+            class: 'chart-axis-hit chart-axis-hit--x', 'aria-hidden': 'true' }),
+          svgEl('rect', { x: 0, y: p.t, width: p.l, height: h - p.t - p.b,
+            class: 'chart-axis-hit chart-axis-hit--y', 'aria-hidden': 'true' })
+        );
       }
       const yStep = (ymax - ymin) / 5;
-      const formatYTick = new Intl.NumberFormat('it-IT', {
-        useGrouping: false,
-        maximumFractionDigits: Math.min(14, Math.max(2, Math.ceil(-Math.log10(yStep))))
-      });
+      function tickLabel(value, step) {
+        if (value === 0 || Math.abs(value) < step / 1000) return '0';
+        const magnitude = Math.abs(value);
+        if (magnitude < 1e-6 || magnitude >= 1e8) {
+          const digits = Math.ceil(Math.log10(magnitude) - Math.log10(step)) + 2;
+          return Number(value.toPrecision(Math.min(17, Math.max(2, digits)))).toString();
+        }
+        const decimals = Math.min(20, Math.max(0, 1 - Math.floor(Math.log10(step))));
+        return Number(value.toFixed(decimals)).toString();
+      }
       for (let i = 0; i <= 5; i++) {
         const value = ymin + i * yStep;
         const y = Y(value);
-        const label = formatYTick.format(Math.abs(value) < yStep / 1000 ? 0 : value);
+        const label = tickLabel(value, yStep);
         svg.append(
           svgEl('line', { x1: p.l, x2: w - p.r, y1: y, y2: y, class: 'grid-line' }),
-          svgEl('text', { x: p.l - 10, y: y + 4, 'text-anchor': 'end' }, label)
+          svgEl('text', { x: p.l - 10, y: y + 4, 'text-anchor': 'end', class: usesMetricScale ? 'chart-axis-hit--y' : '' }, label)
         );
       }
-      const ticks=categories?categories.map((c,i)=>[i,c]).filter(([i])=>visibleCategory(i)):Array.from({length:6},(_,i)=>{const x=xmin+(xmax-xmin)*i/5;return[x,fmt(x)];});
-      for(const[x,label]of ticks){const t=svgEl('text',{x:X(x),y:h-p.b+24,'text-anchor':'middle'},label.length>22?label.slice(0,20)+'…':label);t.append(svgEl('title',{},label));svg.append(t);}
-      svg.append(svgEl('text',{x:w/2,y:h-12,'text-anchor':'middle'},xLabel));
+      const xDivisions = compact ? 3 : 5;
+      const ticks = categories ? categories.map((name, i) => [i, name]).filter(([i]) => visibleCategory(i)) :
+        Array.from({ length: xDivisions + 1 }, (_, i) => {
+          const x = axisValue([xmin, xmax], i / xDivisions);
+          return [x, tickLabel(x, (xmax - xmin) / xDivisions)];
+        });
+      const categoryChars = Math.max(3, Math.min(22, Math.floor((w - p.l - p.r) / (Math.max(1, ticks.length) * 8))));
+      for (const [x, label] of ticks) {
+        const text = categories && label.length > categoryChars ? label.slice(0, categoryChars - 1) + '…' : label;
+        const tick = svgEl('text', { x: X(x), y: h - p.b + 24, 'text-anchor': 'middle', class: usesMetricScale ? 'chart-axis-hit--x' : '' }, text);
+        tick.append(svgEl('title', {}, label));
+        svg.append(tick);
+      }
+      svg.append(svgEl('text',{x:w/2,y:h-12-pannerSpace,'text-anchor':'middle'},xLabel));
       const clipId=`${target}-plot-clip`;const defs=svgEl('defs'),clip=svgEl('clipPath',{id:clipId});clip.append(svgEl('rect',{x:p.l,y:p.t,width:w-p.l-p.r,height:h-p.t-p.b}));defs.append(clip);svg.append(defs);
       const statAnchors=[];
-      if(!categories&&significancePoints.length){
+      if(!categories&&(significancePoints.length||significanceRanges?.length)){
         const layer=svgEl('g',{class:'significance-bars','clip-path':`url(#${clipId})`});
-        const ranges=window.MetricsSignificantMedia.rankIntervals(window.MetricsSignificantMedia.bands(significancePoints,significanceStep));
+        const ranges=significanceRanges??window.MetricsSignificantMedia.rankIntervals(window.MetricsSignificantMedia.bands(significancePoints,significanceStep,pThresholds.single));
         for(const [index,range] of ranges.entries()){
           const left=Math.max(p.l,X(range.left)),right=Math.min(w-p.r,X(range.right));
           if(right<left)continue;
-          const label=`Anteprima ${index+1} · ${fmt(range.start)}–${fmt(range.end)} s · ${range.count} istanti significativi · p minimo ${fmt(range.minP)}. Vai al frammento video.`;
+          const label=range.cluster ? 'Anteprima ' + (index+1) + ' · ' + range.label : `Anteprima ${index+1} · ${fmt(range.start)}–${fmt(range.end)} s · ${range.count} istanti significativi · p minimo ${fmt(range.minP)}. Vai al frammento video.`;
           const bar=svgEl('g',{class:'significance-band',tabindex:0,role:'button','aria-label':label,'data-preview-index':index});
           const center=Math.max(p.l+12,Math.min(w-p.r-12,(left+right)/2));
           bar.append(svgEl('title',{},label),
@@ -429,7 +775,7 @@
           const activate=event=>{
             event.stopPropagation();
             let time=range.peak;
-            const onBand = event.type === 'click' && !event.target.closest('.preview-badge');
+            const onBand = !range.cluster && event.type === 'click' && !event.target.closest('.preview-badge');
             const matrix = onBand ? svg.getScreenCTM() : null;
             if(matrix){
               const point=svg.createSVGPoint();point.x=event.clientX;point.y=event.clientY;
@@ -446,20 +792,21 @@
         }
         svg.append(layer);
       }
-      if(categories&&comparisons.length){
-        significant.forEach((c,i)=>{
-          const a=categories.indexOf(c.epochA),b=categories.indexOf(c.epochB);if(a<0||b<0)return;
-          const y=p.t-14-i*24,stars=c.pAdjusted<=.001?'***':c.pAdjusted<=.01?'**':'*';
-          const label=`${c.label||c.epochA+' – '+c.epochB}: ${stars}, p ${c.correction} = ${fmt(c.pAdjusted)}`;
-          const width=Math.min(88,(X(1)-X(0))*.7/Math.max(1,traces.length));
-          const xa=X(a)+(Number.isInteger(c.groupIndexA)?(c.groupIndexA-(traces.length-1)/2)*width:0),xb=X(b)+(Number.isInteger(c.groupIndexB)?(c.groupIndexB-(traces.length-1)/2)*width:0);
-          const group=svgEl('g',{'aria-label':label,'data-significance':'true'});
-          if(!c.single)group.append(svgEl('path',{d:`M${xa},${y+6}V${y}H${xb}V${y+6}`,stroke:'#35335b',fill:'none','stroke-width':1.5}));
-          const text=svgEl('text',{x:(xa+xb)/2,y:y-4,'text-anchor':'middle'},stars);text.append(svgEl('title',{},label));group.append(text);svg.append(group);
-        });
-        chart.append(node('p',comparisons.some(c => Number.isFinite(c.pAdjusted) && c.pAdjusted <= .05)?'Significatività: * p ≤ 0,05 · ** p ≤ 0,01 · *** p ≤ 0,001. P-value corretti secondo il test; dettagli in tabella.':'Nessun confronto significativo dopo la correzione prevista.','panel-note'));
+      for (const { comparison, xa, xb, center, lane } of annotations) {
+        const y = p.t - 14 - lane * 24;
+        const { pAdjusted } = comparison;
+        const significant = pAdjusted <= pThresholds.single;
+        const mark = pAdjusted <= pThresholds.triple ? '***' : pAdjusted <= pThresholds.double ? '**' : significant ? '*' : 'n.s.';
+        const label = (comparison.label || comparison.epochA + ' – ' + comparison.epochB) +
+          ': ' + (significant ? 'significativo' : 'non significativo') + ', p finale = ' + fmt(pAdjusted);
+        const group = svgEl('g', { role: 'img', 'aria-label': label, 'data-significance': significant });
+        group.append(svgEl('title', {}, label));
+        if (!comparison.single) {
+          group.append(svgEl('path', { d: `M${xa},${y + 6}V${y}H${xb}V${y + 6}`, fill: 'none', 'stroke-width': 1.5 }));
+        }
+        group.append(svgEl('text', { x: center, y: y - 4, 'text-anchor': 'middle', 'aria-hidden': 'true' }, mark));
+        svg.append(group);
       }
-      const barTraces=traces.filter(tr=>!tr.subjectId),individualBars=traces.filter(tr=>tr.isolationOnly);
       if(bars&&ymin<=0&&ymax>=0)svg.append(svgEl('line',{x1:p.l,x2:w-p.r,y1:Y(0),y2:Y(0),stroke:'#8e87a8','stroke-width':1}));
       const swarmPositions=new Map();
       if(categories){
@@ -476,11 +823,14 @@
           for(const q of placed){if(!swarmPositions.has(q.t))swarmPositions.set(q.t,[]);swarmPositions.get(q.t)[i]={dx:q.dx*scale,r:4*scale};}
         }
       }
+      const traceClip = svgEl('g', { 'clip-path': 'url(#' + clipId + ')' });
+      const traceContent = svgEl('g');
+      traceClip.append(traceContent);
+      svg.append(traceClip);
       for(const tr of traces){
         const traceLayer=svgEl('g',{'data-trace-subject':tr.subjectId||''});
-        traceLayer.setAttribute('clip-path',`url(#${clipId})`);
         if(tr.isolationOnly){traceLayer.dataset.isolationOnly='true';}
-        svg.append(traceLayer);
+        traceContent.append(traceLayer);
         if(tr.swarm&&categories){
           for(let i=0;i<tr.x.length;i++){
             if(!C.finite(tr.y[i]) || !visibleCategory(tr.x[i]) || tr.y[i] < ymin || tr.y[i] > ymax)continue;
@@ -493,10 +843,10 @@
           continue;
         }
         if(bars&&categories){
-          const peers=tr.isolationOnly?individualBars:barTraces,slot=peers.indexOf(tr),step=X(1)-X(0),width=Math.min(88,step*.7/Math.max(1,peers.length));
+          const peers=tr.isolationOnly?individualBars:barTraces,slot=peers.indexOf(tr),width=slotWidth(peers.length);
           for(let i=0;i<tr.x.length;i++){
             if(!C.finite(tr.y[i]))continue;
-            const x=X(tr.x[i])+(slot-(peers.length-1)/2)*width,y=Y(tr.y[i]),half=tr.band?.[i],n=tr.n?.[i];
+            const x=barCenter(tr.x[i],slot,peers.length,width),y=Y(tr.y[i]),half=tr.band?.[i],n=tr.n?.[i];
             const label=`${tr.name} · ${categories[i]}: ${fmt(tr.y[i])}${tr.band?(C.finite(half)?` · ${tr.bandLabel||'IC 95%'} [${fmt(tr.y[i]-half)}, ${fmt(tr.y[i]+half)}]`:` · ${tr.bandLabel||'IC 95%'} non disponibile (N < 2)`):''}${n!==undefined?` · N=${n}`:''}`;
             const bar=svgEl('rect',{x:x-width*.43,y:Math.min(Y(0),y),width:width*.86,height:Math.max(.8,Math.abs(y-Y(0))),fill:tr.color,opacity:tr.isolationOnly?.9:.78,rx:2});
             bar.append(svgEl('title',{},label));traceLayer.append(bar);
@@ -522,7 +872,7 @@
         }
         if(categories||tr.x.length===1)for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i]))continue;const x=X(tr.x[i]),y=Y(tr.y[i]);if(tr.band&&C.finite(tr.band[i]))traceLayer.append(svgEl('line',{x1:x,x2:x,y1:Y(tr.y[i]-tr.band[i]),y2:Y(tr.y[i]+tr.band[i]),stroke:tr.color,'stroke-width':2}));const circle=svgEl('circle',{cx:x,cy:y,r:tr.bold?6:4,fill:tr.color,opacity:tr.bold?1:.65});circle.append(svgEl('title',{},`${tr.name}: ${fmt(tr.y[i])}`));traceLayer.append(circle);}
       }
-      if(hover){svg.addEventListener('pointermove',event=>{if(svg.classList.contains('is-selecting'))return;const rect=svg.getBoundingClientRect(),x=xmin+((event.clientX-rect.left)/rect.width*w-p.l)/(w-p.l-p.r)*(xmax-xmin);$('tooltip').textContent=hover(x);$('tooltip').hidden=false;$('tooltip').style.left=Math.max(5,Math.min(event.clientX+12,window.innerWidth-320))+'px';$('tooltip').style.top=Math.max(5,Math.min(event.clientY+12,window.innerHeight-110))+'px';});svg.addEventListener('pointerleave',()=>{$('tooltip').hidden=true;});}
+      if(hover){svg.addEventListener('pointermove',event=>{if(svg.classList.contains('is-selecting')||svg.classList.contains('is-panning'))return;if(event.target.closest('.chart-panner')){$('tooltip').hidden=true;return;}const rect=svg.getBoundingClientRect(),x=xmin+((event.clientX-rect.left)/rect.width*w-p.l)/(w-p.l-p.r)*(xmax-xmin);$('tooltip').textContent=hover(x);$('tooltip').hidden=false;$('tooltip').style.left=Math.max(5,Math.min(event.clientX+12,window.innerWidth-320))+'px';$('tooltip').style.top=Math.max(5,Math.min(event.clientY+12,window.innerHeight-110))+'px';});svg.addEventListener('pointerleave',()=>{$('tooltip').hidden=true;});}
       const momentAnchors=[];
       if(target==='chart'&&!categories&&momentMarkers){
         const layer=svgEl('g',{class:'moment-markers','aria-label':'Istanti estratti','clip-path':'url(#'+clipId+')'});
@@ -538,21 +888,55 @@
         });
         svg.append(layer);
       }
+      let overview;
+      let followPlayback;
       if (zoom) {
-        const layout = node('div', undefined, 'chart-plot-layout');
-        const viewport = node('div', undefined, 'chart-plot-viewport');
-        viewport.append(svg);
-        const horizontal = axisPanner('x', zoom, domain.x, visible.x, categories, redraw);
-        horizontal.append(zoomTools(zoom, redraw));
-        layout.append(viewport, axisPanner('y', zoom, domain.y, visible.y, categories, redraw), horizontal);
-        chart.append(layout);
+        if (!rendered) {
+          const layout = node('div', undefined, 'chart-plot-layout');
+          const viewport = node('div', undefined, 'chart-plot-viewport');
+          const navigation = zoomTools();
+          layout.append(navigation.element, viewport);
+          chart.append(layout);
+          rendered = { viewport, navigation };
+        }
+        saved.rendered = rendered;
+        const { viewport, navigation } = rendered;
+        navigation.update(visible, view, zoom, svg);
+        viewport.replaceChildren(svg);
+        const plotWidth = w - p.l - p.r;
+        const plotHeight = h - p.t - p.b;
+        const xPanner = { x: p.l, y: h - pannerSpace + 1, width: plotWidth,
+          height: Math.min(pannerSpace - 8, Math.round((plotHeight + pannerSpace) * .16)) };
+        enableNavigation(svg, { left: p.l, top: p.t, width: plotWidth, height: plotHeight },
+          zoom, visible, view, traceContent);
+        panner(svg, 'x', xPanner, domain.x, visible.x, traces, automatic.y, categories, view);
+        panner(svg, 'y', { x: w - p.r + 9, y: p.t, width: rightPannerSpace - 2, height: plotHeight },
+          domain.y, visible.y, traces, automatic.y, categories, view, navigation.sync);
+        if (hasVideoCursor) {
+          overview = { ...xPanner, min: domain.x[0], max: domain.x[1] };
+          followPlayback = (time, now) => {
+            if (now - zoom.lastFollow < 125 || !svg.isConnected || !svg.getClientRects().length ||
+                svg.classList.contains('is-view-dragging') ||
+                document.activeElement?.dataset?.zoomControl?.startsWith('y-limit-')) return;
+            const span = xmax - xmin;
+            const offset = (time - xmin) / span;
+            if (offset >= 0 && offset <= .85) return;
+            const anchor = offset < 0 ? .15 : .85;
+            const [min, max] = automatic.x;
+            if (span >= max - min) return;
+            const start = Math.max(min, Math.min(max - span, time - anchor * span));
+            if (Math.abs(start - xmin) < Math.max(.015, span * .005)) return;
+            zoom.lastFollow = now;
+            view.commit({ x: [start, start + span] });
+          };
+        }
       } else {
         chart.append(svg);
       }
       if(target==='chart'&&!categories)document.dispatchEvent(new CustomEvent('metrics-markers-rendered',{detail:{anchors:momentAnchors}}));
       if(target==='statsGroupPlot'&&!categories)document.dispatchEvent(new CustomEvent('metrics-stat-bands-rendered',{detail:{anchors:statAnchors}}));
-      if(hasVideoCursor)window.MetricsVideo?.attach(svg,{min:xmin,max:xmax,left:p.l,top:p.t,width:w-p.l-p.r,height:h-p.t-p.b,showStart:!zoom?.x});
-      if(target==='chart'||(target==='statsGroupPlot'&&traces.length===1))return;
+      if(hasVideoCursor)window.MetricsVideo?.attach(svg,{min:xmin,max:xmax,left:p.l,top:p.t,width:w-p.l-p.r,height:h-p.t-p.b,showStart:!zoom?.x,overview,followPlayback});
+      if(target==='chart'||target==='statsGroupPlot')return;
       const legend=node('div',undefined,'legend');for(const tr of traces){const span=node('span'),dot=node('i');span.dataset.traceSubject=tr.subjectId||'';if(tr.isolationOnly){span.dataset.isolationOnly='true';}dot.style.background=tr.color;span.append(dot,document.createTextNode(tr.name));legend.append(span);}chart.append(legend);
     }
     function redrawSeries(traces) {

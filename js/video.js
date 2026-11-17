@@ -19,11 +19,22 @@
       if (changed) document.dispatchEvent?.(new CustomEvent('metrics-video-changed'));
     }
   });
-  function paint(){
+  function paint(followAt){
+    const following = [];
     const label = `${time.toFixed(2)} s`;
     $('videoTime').textContent = label;
     for(const [svg,p]of plots){
       if(!svg.isConnected){plots.delete(svg);continue;}
+      if (p.overview) {
+        const { marker, min, max, x, width } = p.overview;
+        const inOverview = activeUrl && series && time >= min && time <= max;
+        marker.setAttribute('visibility', inOverview ? 'visible' : 'hidden');
+        if (inOverview) {
+          const position = x + (time - min) / (max - min) * width;
+          marker.setAttribute('x1', position);
+          marker.setAttribute('x2', position);
+        }
+      }
       const atStart = activeUrl && p.showStart && time === 0 && p.min > 0;
       const visible = series && (atStart || (time >= p.min && time <= p.max));
       p.line.setAttribute('visibility',visible?'visible':'hidden');
@@ -41,7 +52,9 @@
         p.badge.setAttribute('width', width);
         p.label.textContent = label;
       }
+      if (followAt !== undefined && p.followPlayback && !p.seeking()) following.push(p.followPlayback);
     }
+    for (const follow of following) follow(time, followAt);
   }
   function seek(next){
     if(!Number.isFinite(next))return;
@@ -51,7 +64,14 @@
     }
     paint();
   }
-  function tick(){frame=null;if(!activeUrl||!series)return;time=video.currentTime;paint();if(!video.paused&&!video.ended)frame=requestAnimationFrame(tick);}
+  function tick(now) {
+    frame = null;
+    if (!activeUrl || !series) return;
+    time = video.currentTime;
+    const playing = !video.paused && !video.ended;
+    paint(playing ? now : undefined);
+    if (playing) frame = requestAnimationFrame(tick);
+  }
   function activate(){
     const next=assignments.get(epoch)?.url||null;
     if(next!==activeUrl){
@@ -143,7 +163,7 @@
     activate();for(const id of stale)release(id);
     assignmentEpochs=epochs;rows();paint();
   }
-  function attach(svg,{min,max,left,top,width,height,showStart=true}){
+  function attach(svg,{min,max,left,top,width,height,showStart=true,overview,followPlayback}){
     function element(tag, attributes) {
       const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
       for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
@@ -161,7 +181,16 @@
     const label = element('text', { x: 0, y: 11, 'text-anchor': 'middle', 'dominant-baseline': 'central' });
     marker.append(badge, label);
     svg.append(line, axis, marker);
-    plots.set(svg, { min, max, left, width, axisY, line, axis, marker, badge, label, showStart });
+    let pointerId = null;
+    const p = { min, max, left, width, axisY, line, axis, marker, badge, label, showStart, followPlayback,
+      seeking: () => pointerId !== null };
+    if (overview) {
+      const previewMarker = element('line', { y1: overview.y, y2: overview.y + overview.height,
+        class: 'video-playhead-line video-playhead-overview', 'aria-hidden': 'true' });
+      svg.append(previewMarker);
+      p.overview = { ...overview, marker: previewMarker };
+    }
+    plots.set(svg, p);
 
     function localPoint(event) {
       const matrix = svg.getScreenCTM();
@@ -174,7 +203,6 @@
     function seekAt(x) {
       seek(min + Math.max(0, Math.min(1, (x - left) / width)) * (max - min));
     }
-    let pointerId = null;
     axis.addEventListener('pointerdown', event => {
       if (!event.isPrimary || event.button !== 0 || pointerId !== null) return;
       const local = localPoint(event);

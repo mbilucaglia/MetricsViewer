@@ -94,3 +94,14 @@ test('green bands fill temporal cells and share the clip grouping without bridgi
   assert.deepEqual(bands([{time:1,pAdjusted:.01},{time:3,pAdjusted:.02}],2).map(r=>[r.left,r.right]),[[0,4]]);
   assert.deepEqual(bands(points,NaN).map(r=>[r.left,r.right]),[[.5,.5],[1,1],[1.5,1.5],[2.5,2.5],[3.5,3.5]]);
 });
+
+test('temporal bands use the configured threshold, including its exact boundary', () => {
+  const points = [
+    { time: 0, pAdjusted: .06 },
+    { time: 1, pAdjusted: .1 },
+    { time: 2, pAdjusted: .11 },
+    { time: 3, pAdjusted: .1 }
+  ];
+  assert.deepEqual(bands(points, 1), []);
+  assert.deepEqual(bands(points, 1, .1).map(({ start, end }) => [start, end]), [[0, 1], [3, 3]]);
+});

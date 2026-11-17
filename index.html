@@ -238,7 +238,7 @@
                   ></div>
                 <section id="significantMedia" hidden aria-labelledby="significantMediaTitle">
                   <h3 id="significantMediaTitle">Momenti significativi nel video</h3>
-                  <p class="panel-note">Istanti consecutivi con p finale ≤ 0,05, raggruppati senza attraversare lacune. Ogni frame corrisponde alla differenza massima nell’intervallo. Un istante isolato produce un frame; le clip vanno dal primo all’ultimo istante significativo.</p>
+                  <p class="panel-note">Istanti significativi consecutivi, raggruppati senza attraversare lacune. Ogni frame corrisponde alla differenza massima nell’intervallo. Un istante isolato produce un frame; le clip vanno dal primo all’ultimo istante significativo.</p>
                   <p class="panel-note">Clip con audio originale, ricodificate in tempo reale (circa 30 fps): mantieni la scheda visibile. Gli intervalli descrivono i campioni significativi, non un test statistico sull’intera clip. Il CSV delle analisi include tutti i punti per tracciabilità.</p>
                   <div id="significantIntervals"></div>
                   <p id="mediaStatus" role="status" aria-live="polite" class="panel-note"></p>
@@ -249,10 +249,13 @@
               <details id="statsDetails" class="disclosure stats-output">
                 <summary>Dettagli delle analisi statistiche</summary>
                 <div class="disclosure__body">
-                  <label class="check-option">
-                    <input id="significantOnly" type="checkbox" checked />
-                    Mostra solo risultati con p finale ≤ 0,05
-                  </label>
+                  <div class="stats-detail-controls">
+                    <label class="check-option">
+                      <input id="significantOnly" type="checkbox" checked />
+                      <span id="significantOnlyLabel">Mostra solo risultati con p finale ≤ 0,05</span>
+                    </label>
+                    <button id="exportStatsInput" type="button" disabled>Esporta dati del test</button>
+                  </div>
                   <div id="statsResults" class="results-table" tabindex="0" role="region" aria-label="Risultati statistici"></div>
                 </div>
               </details>
@@ -505,6 +508,13 @@
             </option>
           </select>
         </div>
+        <div class="control-block" id="temporalCorrectionControl">
+          <label for="temporalCorrection">Correzione</label>
+          <select id="temporalCorrection">
+            <option value="maxT">Max-T per istante</option>
+            <option value="cluster">Massa dei cluster</option>
+          </select>
+        </div>
         <div class="control-block">
           <label for="nullValue">Valore nullo</label><input id="nullValue" type="number" value="0" step="any" />
         </div>
@@ -531,6 +541,25 @@
           />
         </div>
       </div>
+      <fieldset class="stats-p-thresholds">
+        <legend>Soglie del p-value finale</legend>
+        <div class="stats-p-thresholds__fields">
+          <div class="control-block">
+            <label for="pThresholdSingle">*</label>
+            <input id="pThresholdSingle" type="number" min="0" max="1" step="any" required />
+          </div>
+          <div class="control-block">
+            <label for="pThresholdDouble">**</label>
+            <input id="pThresholdDouble" type="number" min="0" max="1" step="any" required />
+          </div>
+          <div class="control-block">
+            <label for="pThresholdTriple">***</label>
+            <input id="pThresholdTriple" type="number" min="0" max="1" step="any" required />
+          </div>
+        </div>
+        <p id="pThresholdNonSignificant" class="panel-note"></p>
+        <p id="pThresholdError" class="panel-note" role="alert" hidden>Scegli tre soglie distinte con 0 &lt; *** &lt; ** &lt; * &lt; 1.</p>
+      </fieldset>
       <details class="disclosure stats-sample">
         <summary>Campione statistico <span id="statsExcludedCount"></span></summary>
         <div class="disclosure__body">
@@ -615,9 +644,8 @@
     <script src="js/busy.js"></script>
     <script src="js/core.js"></script>
     <script src="js/outliers.js"></script>
-    <script src="js/permutation.js"></script>
+    <script src="js/webr-permutation.js"></script>
     <script src="js/analysis.js"></script>
-    <script src="js/repeated.js"></script>
     <script src="js/isolation.js"></script>
     <script src="js/floating-media.js"></script>
     <script src="js/significant-media.js"></script>

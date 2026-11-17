@@ -3,8 +3,12 @@
   const C=MetricsCore,A=MetricsAnalysis,$=id=>document.getElementById(id);
   const subviews={series:'view',summary:'view'};
   let currentMode='series',context=null,version=0,results=[],resultMeta=null;
+  let report;
   const groupSettingsKey = 'metrics-viewer:groups';
   const savedGroups = loadGroupSettings();
+  const thresholdFields = { single: 'pThresholdSingle', double: 'pThresholdDouble', triple: 'pThresholdTriple' };
+  const defaultThresholds = { single: .05, double: .01, triple: .001 };
+  let pThresholds = validThresholds(savedGroups?.pThresholds) ? savedGroups.pThresholds : defaultThresholds;
   let groups = savedGroups?.groups ?? [{id:'g1',name:'Gruppo 1'},{id:'g2',name:'Gruppo 2'}];
   let nextGroup = savedGroups?.nextGroup ?? 3;
   const isolation=MetricsIsolation.create();let isolationKey=null,isolationDataset=null,latestFlags=new Map();
@@ -26,11 +30,16 @@
       $('design').value = designs[currentMode];
       $('significantOnly').checked = significantOnlyByMode[currentMode];
     }
+    $('temporalCorrectionControl').hidden = currentMode !== 'series';
     const within=$('design').querySelector('[value="within"]');within.hidden=currentMode!=='summary';within.disabled=currentMode!=='summary';
   }
   function methodDescription(){
     if (previousSettings) return;
     const within=$('design').value==='within',summary=currentMode==='summary';
+    if (!summary && $('temporalCorrection').value === 'cluster') {
+      $('statsMethod').textContent = 'Test per massa dei cluster. Soglie di formazione a α = 0,05, bilaterale per t e a coda superiore per F. Il p-value valuta l’intero cluster. Le lacune separano i cluster.';
+      return;
+    }
     $('statsMethod').textContent=within?'Confronto entro soggetto sulle epoche selezionate: con 2 epoche, t appaiato a due code (prima meno seconda); con 3 o più, F a misure ripetute con permutazione delle epoche entro ciascun soggetto e post-hoc t appaiati su tutte le coppie, corretti max-|T| tramite cambi di segno congiunti per soggetto. Si usano gli stessi soggetti completi per omnibus e post-hoc. Gli IC delle barre descrivono le medie delle epoche, non le differenze appaiate.':summary?'Test per ciascuna epoca contro un valore nullo o tra gruppi indipendenti. Correzione max-|T| / max-F su tutte le epoche selezionate; soggetti con dati completi. Per i gruppi indipendenti: post-hoc a permutazioni tra tutte le coppie, corretti max-|T| congiunto su coppie × epoche. Per confrontare le epoche tra loro scegli il disegno entro soggetto.':'Test di permutazione: t contro un valore nullo o F tra gruppi indipendenti. Correzione max-|T| / max-F su tutti gli istanti analizzati; stessi soggetti a ogni istante.';
   }
   const panels = {
@@ -50,18 +59,23 @@
     }
     $('statsTitle').textContent = `Analisi statistiche · ${currentMode === 'series' ? 'Serie temporali' : 'Riepilogo temporale'}`;
   }
+  let activeAnalysis;
   const statsDetails = $('statsDetails');
   const showStatsDetails = $('showStatsDetails');
   statsDetails.addEventListener('toggle', () => {
     showStatsDetails.setAttribute('aria-expanded', String(statsDetails.open));
   });
   showStatsDetails.onclick = () => {
-    if (!results.length) return;
+    if (!report) return;
     statsDetails.open = true;
     statsDetails.querySelector('summary').focus({ preventScroll: true });
     statsDetails.scrollIntoView({ block: 'start' });
   };
   function clearResults(message='Impostazioni aggiornate: esegui nuovamente l’analisi.'){
+    activeAnalysis?.abort();
+    activeAnalysis = null;
+    report = null;
+    $('exportStatsInput').disabled = true;
     globalThis.MetricsSignificantMedia?.clear();
     statsDetails.open = false;
     showStatsDetails.disabled = true;
@@ -81,7 +95,7 @@
   function saveGroupSettings() {
     if (previousSettings) return;
     try {
-      sessionStorage.setItem(groupSettingsKey, JSON.stringify({groups,nextGroup,assignments:[...assignments]}));
+      sessionStorage.setItem(groupSettingsKey, JSON.stringify({groups,nextGroup,assignments:[...assignments],pThresholds}));
     } catch { /* Keep the current in-memory assignments. */ }
   }
 
@@ -90,7 +104,8 @@
     const design = $('design').value;
     const type = {one:'Un campione',within:'Confronto tra epoche',multi:'Gruppi indipendenti'}[design];
     const permutations = Number($('permutations').value).toLocaleString('it-IT');
-    const parts = [type, design === 'one' ? `Valore nullo ${$('nullValue').value}` : null,
+    const correction = currentMode === 'series' ? ($('temporalCorrection').value === 'cluster' ? 'Massa dei cluster' : 'Max-T') : null;
+    const parts = [type, correction, design === 'one' ? `Valore nullo ${$('nullValue').value}` : null,
       `${permutations} permutazioni`, `Seed ${$('seed').value}`];
     $('statsOptionsSummary').textContent = parts.filter(Boolean).join(' · ');
   }
@@ -167,7 +182,20 @@
       $('groupNames').append(row);
     }
   }
-  function table(target,headers,rows){const t=el('table'),h=el('thead'),tr=el('tr');headers.forEach(x=>tr.append(el('th',x)));h.append(tr);t.append(h);const body=el('tbody');for(const row of rows.slice(0,1000)){const tr=el('tr');row.forEach(x=>tr.append(el('td',x)));body.append(tr);}t.append(body);$(target).append(t);if(rows.length>1000)$(target).append(el('p','Anteprima limitata a 1.000 righe; il CSV contiene tutti i risultati.','panel-note'));}
+  function table(target, headers, rows, caption) {
+    const t = el('table'), head = el('thead'), headings = el('tr'), body = el('tbody');
+    if (caption) t.append(el('caption', caption));
+    headings.append(...headers.map(value => el('th', value)));
+    head.append(headings);
+    for (const row of rows.slice(0, 1000)) {
+      const tr = el('tr');
+      tr.append(...row.map(value => el('td', value)));
+      body.append(tr);
+    }
+    t.append(head, body);
+    $(target).append(t);
+    if (rows.length > 1000) $(target).append(el('p', 'Anteprima limitata a 1.000 righe. Il CSV contiene tutti i risultati.', 'panel-note'));
+  }
   function flagLabel(flag){return flag?.status==='flagged'?(flag.flaggedEpochs?`Sì (${flag.flaggedEpochs.length})`:'Sì'):flag?.status==='within'?'No':flag?.status==='disabled'?'Off':'N/D';}
   function flagDescription(flag,summary){
     if(flag?.flaggedEpochs && flag.status!=='disabled'){
@@ -435,7 +463,33 @@
   $('restoreIsolation').onclick=()=>{isolation.reset();if(context)updateIsolationControls(context);};
   function refreshOutlierFeedback(){if(!context)return;const ctx=context;return MetricsBusy.run('Ricerca degli outlier in corso…',async()=>{if(context===ctx)updateOutliers(ctx);}).catch(error=>{$('outlierContext').textContent=error.message;});}
   $('outlierSeries').onchange=refreshOutlierFeedback;$('outlierSummary').onchange=refreshOutlierFeedback;
-  const statsSettingsIds = ['design', 'nullValue', 'permutations', 'seed'];
+  const statsSettingsIds = ['design', 'nullValue', 'permutations', 'seed', 'temporalCorrection'];
+  function validThresholds(thresholds) {
+    if (!thresholds) return false;
+    const { single, double, triple } = thresholds;
+    return [single, double, triple].every(Number.isFinite) && 0 < triple && triple < double && double < single && single < 1;
+  }
+
+  const formatThreshold = value => String(value).replace('.', ',');
+  function updateThresholdNote() {
+    const value = Number($('pThresholdSingle').value);
+    $('pThresholdNonSignificant').textContent = value > 0 && value < 1
+      ? 'n.s. · p > ' + formatThreshold(value) : 'n.s. · p sopra la soglia di *';
+    $('pThresholdError').hidden = true;
+  }
+
+  function restoreThresholdFields() {
+    for (const [key, id] of Object.entries(thresholdFields)) $(id).value = String(pThresholds[key]);
+    updateThresholdNote();
+  }
+
+  for (const id of Object.values(thresholdFields)) $(id).addEventListener('input', updateThresholdNote);
+  restoreThresholdFields();
+
+  function updateResultThresholds() {
+    resultMeta = { ...resultMeta, alpha: pThresholds.single,
+      p_threshold_single: pThresholds.single, p_threshold_double: pThresholds.double, p_threshold_triple: pThresholds.triple };
+  }
   const readStatsSettings = () => ({
     values: statsSettingsIds.map(id => $(id).value),
     groups: groups.map(group => ({...group})), nextGroup,
@@ -443,13 +497,26 @@
   });
   connectMetricsSettings({
     trigger: $('openStatsSettings'), dialog: $('statsSettingsDialog'),
-    begin: () => { previousSettings = readStatsSettings(); },
+    begin: () => { previousSettings = readStatsSettings(); restoreThresholdFields(); },
     accept: () => {
       if (statsSettingsIds.some(id => $(id).reportValidity?.() === false)) return false;
+      const nextThresholds = Object.fromEntries(Object.entries(thresholdFields).map(([key, id]) => [key, Number($(id).value)]));
+      if (!validThresholds(nextThresholds)) {
+        $('pThresholdError').hidden = false;
+        return false;
+      }
+      const alphaChanged = pThresholds.single !== nextThresholds.single;
+      const thresholdsChanged = alphaChanged || pThresholds.double !== nextThresholds.double || pThresholds.triple !== nextThresholds.triple;
       const next = readStatsSettings();
       const changed = JSON.stringify(previousSettings) !== JSON.stringify(next);
       previousSettings = null;
-      if (changed) { saveGroupSettings(); clearResults(); }
+      pThresholds = nextThresholds;
+      if (changed || thresholdsChanged) saveGroupSettings();
+      if (changed) clearResults();
+      else if (report && thresholdsChanged) {
+        updateResultThresholds();
+        if (currentMode === 'summary' || alphaChanged) report.render();
+      }
       groupEditor();
       updateStatsSample();
       updateVisibleOutlierAction();
@@ -462,6 +529,7 @@
       nextGroup = saved.nextGroup;
       assignments = new Map(saved.assignments);
       statsExclusions = new Set(saved.exclusions);
+      restoreThresholdFields();
       groupEditor();
       updateStatsSample();
       if (document.dispatchEvent) document.dispatchEvent(new Event('metrics-settings-restored'));
@@ -469,11 +537,77 @@
   });
   $('design').onchange=()=>{if (!previousSettings) clearResults();groupEditor();updateStatsSample();};
   $('addGroup').onclick=()=>{groups.push({id:`g${nextGroup}`,name:`Gruppo ${nextGroup++}`});groupSettingsChanged();};
-  function displayResults(){
-    showStatsDetails.disabled = !results.length;
-    $('statsResults').replaceChildren();const visible=$('significantOnly').checked?results.filter(r=>Number.isFinite(r.pAdjusted)&&r.pAdjusted<=.05):results;
-    table('statsResults',[currentMode==='series'?'Tempo [s]':'Epoca / confronto','Test','Statistica','Differenza media A − B','p non corretto','p finale','Correzione','N'],visible.map(r=>[r.label,r.test||($('design').value==='one'?'t':'F'),fmt(r.statistic),fmt(r.meanDifference),fmt(r.pUncorrected),fmt(r.pAdjusted),r.correction||resultMeta?.correction||'',r.n]));
-    if(!visible.length)$('statsResults').append(el('p','Nessun risultato con il filtro selezionato.','panel-note'));
+  function clusterDirection(direction) {
+    return direction > 0 ? 'Positiva' : direction < 0 ? 'Negativa' : 'Omnibus';
+  }
+
+  const inferentialSettings = {
+    one: ['t a un campione · due code', 'Cambi di segno per soggetto'],
+    repeated: ['F a misure ripetute', 'Permutazione delle epoche entro ogni soggetto'],
+    paired: ['t appaiato · due code', 'Cambi di segno congiunti per soggetto'],
+    groups: ['F omnibus tra gruppi', 'Permutazione delle etichette di gruppo'],
+    posthoc: ['t post-hoc tra gruppi · due code', 'Permutazione congiunta delle etichette di gruppo'],
+    cluster: ['Test per massa dei cluster', 'Massima massa per permutazione']
+  };
+
+  function displayResults() {
+    const output = $('statsResults');
+    output.replaceChildren();
+    showStatsDetails.disabled = !report;
+    if (!report) return;
+    const visible = $('significantOnly').checked ? results.filter(row => Number.isFinite(row.pAdjusted) && row.pAdjusted <= resultMeta.alpha) : results;
+    const type = resultMeta.view === 'series' ? 'Tempo [s]' : 'Epoca';
+    const clusterMode = resultMeta.correction === 'cluster-mass';
+    const alpha = formatThreshold(resultMeta.alpha);
+    $('significantOnlyLabel').textContent = clusterMode
+      ? 'Mostra solo cluster con p ≤ ' + alpha : 'Mostra solo risultati con p finale ≤ ' + alpha;
+    const adjusted = ['p grezzo', 'p finale', 'Correzione', 'Ricampionamenti'];
+    const pValues = row => [fmt(row.pUncorrected), fmt(row.pAdjusted), row.correction || resultMeta.correction, row.resamples ?? resultMeta.resamples];
+    const interval = (lo, hi) => Number.isFinite(lo) && Number.isFinite(hi) ? '[' + fmt(lo) + ', ' + fmt(hi) + ']' : '—';
+    for (const [kind, [caption]] of Object.entries(inferentialSettings)) {
+      const rows = visible.filter(row => row.kind === kind);
+      if (!rows.length) continue;
+      if (kind === 'cluster') {
+        table('statsResults', ['Inizio [s]', 'Fine [s]', 'Campioni', 'Direzione', 'N', 'Soglia', 'Massa', 'Picco [s]',
+          resultMeta.design === 'one' ? 't al picco' : 'F al picco', 'p del cluster', 'Ricampionamenti'],
+          rows.map(row => [fmt(row.start), fmt(row.end), row.samples, clusterDirection(row.direction), row.n, fmt(row.threshold),
+            fmt(row.statistic), fmt(report.times[row.peakIndex]), fmt(row.peakStatistic), fmt(row.pAdjusted), resultMeta.resamples]), caption);
+      } else if (kind === 'repeated' || kind === 'groups') {
+        const heading = kind === 'repeated' ? 'Epoche' : type;
+        table('statsResults', [heading, 'N', 'gdl 1', 'gdl 2', 'QM effetto', 'QM errore', 'F', 'η² parziale', ...adjusted],
+          rows.map(row => [row.label, row.n, row.df1, row.df2, fmt(row.msEffect), fmt(row.msError),
+            fmt(row.statistic), fmt(row.eta), ...pValues(row)]), caption);
+      } else {
+        const independent = kind === 'posthoc';
+        const target = kind === 'paired' ? 'Coppia di epoche' : independent ? 'Epoca · confronto' : type;
+        table('statsResults', [target, ...(independent ? ['N A', 'N B'] : ['N']), 'gdl', 't', 'Δ media', 'Errore standard',
+          'IC 95% di Δ', kind === 'paired' ? 'Cohen d_z' : 'Cohen d', ...adjusted],
+          rows.map(row => [row.label, ...(independent ? [row.nA, row.nB] : [row.n]), row.df1, fmt(row.statistic), fmt(row.meanDifference),
+            fmt(row.se), interval(row.ciLow, row.ciHigh), fmt(row.d), ...pValues(row)]), caption);
+      }
+    }
+    if (!visible.length) output.append(el('p', results.length ? 'Nessun risultato con il filtro selezionato.' : 'Nessun cluster ha superato la soglia di formazione.', 'panel-note'));
+    const selected = new Set(visible.map(row => row.index));
+    for (const row of visible) {
+      if (row.kind !== 'cluster') continue;
+      for (let i = row.startIndex; i <= row.endIndex; i++) selected.add(i);
+    }
+    const seriesFiltered = resultMeta.view === 'series' && $('significantOnly').checked;
+    const times = report.labels;
+    const descriptives = report.summaries.flatMap((cells, group) => cells.flatMap((cell, index) => {
+      if (seriesFiltered && !selected.has(index)) return [];
+      return [[times[index], report.groupNames[group], report.groupSizes[group],
+        fmt(cell.mean), fmt(cell.sd), interval(cell.mean - cell.margin, cell.mean + cell.margin)]];
+    }));
+    if (descriptives.length) table('statsResults', [type, 'Campione', 'N', 'Media', 'DS', 'IC 95% della media'], descriptives, 'Statistiche descrittive');
+    output.append(el('p', 'Gli IC 95% sono puntuali e usano la distribuzione t. I p-value usano le permutazioni e la correzione riportata.', 'panel-note'));
+    const { software } = report;
+    const settings = ['N = ' + report.subjects.length, resultMeta.metric,
+      'Seed ' + resultMeta.seed, 'Permutazioni richieste ' + resultMeta.permutations,
+      'Soglia * = ' + formatThreshold(resultMeta.alpha), 'webR ' + software.webR, software.R, 'permuco ' + software.permuco];
+    if (clusterMode) settings.push('Soglia di formazione ' + fmt(resultMeta.cluster_threshold));
+    if (resultMeta.dropped_times) settings.push(resultMeta.dropped_times + ' istanti incompleti omessi');
+    output.append(el('p', settings.join(' · '), 'panel-note'));
   }
   $('significantOnly').onchange = () => {
     significantOnlyByMode[currentMode] = $('significantOnly').checked;
@@ -481,7 +615,11 @@
   };
   $('runStats').onclick=async()=>{
     if(!context)return;const ctx=context;clearResults('Preparazione dei test…');const ticket=version,design=$('design').value,permutations=Number($('permutations').value),nullValue=Number($('nullValue').value),seed=Number($('seed').value);
-    const job=MetricsBusy.start('Preparazione dell’analisi statistica…',{onCancel:()=>clearResults('Analisi annullata.')});
+    const controller = new AbortController();
+    activeAnalysis = controller;
+    const job = MetricsBusy.start('Preparazione dell’analisi statistica…', {onCancel: () => {
+      if (activeAnalysis === controller) clearResults('Analisi annullata.');
+    }});
     try{
       await job.step('Preparazione dei dati per i test…');if(ticket!==version)return;
       if(!Number.isInteger(permutations)||permutations<100||permutations>50000||(design==='one'&&!Number.isFinite(nullValue))||!Number.isInteger(seed)||seed<0||seed>4294967295)throw new Error('Controlla valore nullo, seed e numero di permutazioni (100–50.000).');
@@ -507,18 +645,30 @@
       $('runStats').disabled=true;
       const within=design==='within';
       if(within&&ctx.mode!=='summary')throw new Error('Il confronto tra epoche è disponibile nel riepilogo temporale.');
-      const progress=(done,total,phase='Permutazioni')=>{if(version===ticket){$('statsStatus').textContent=`${phase}: ${done.toLocaleString('it-IT')} / ${total.toLocaleString('it-IT')}…`;job.update(`${phase} in corso…`,{value:done,max:total});}};
-      let repeated=null,points,posthoc=[];
-      if(within){
-        repeated=await MetricsRepeated.run({subjects,epochs:ctx.analysisInput.epochs,permutations,seed,isCancelled:()=>version!==ticket,onProgress:progress});
-        points=[...(repeated.omnibus?[repeated.omnibus]:[]),...repeated.comparisons];
-      }else points=await TimeSeriesPermutation.run({subjects,times:matrix.times,mode:design,nullValue,permutations,seed,isCancelled:()=>version!==ticket,onProgress:progress});
-      if(design==='multi'&&ctx.mode==='summary'){posthoc=await TimeSeriesPermutation.runPairwise({subjects,times:matrix.times,groupNames:groups.map(g=>g.name),permutations,seed,isCancelled:()=>version!==ticket,onProgress:(done,total)=>progress(done,total,'Post-hoc tra gruppi')});}
+      const clusterMode = ctx.mode === 'series' && $('temporalCorrection').value === 'cluster';
+      const breaks = matrix.times.map((time, index) => clusterMode && index > 0 &&
+        Number.isFinite(testAlignment?.step) && time - matrix.times[index - 1] > 1.5 * testAlignment.step);
+      const computed = await MetricsWebR.run({
+        subjects, times: matrix.times, breaks, seed, mode: design, nullValue, permutations,
+        correction: clusterMode ? 'cluster' : 'maxT',
+        epochs: within ? ctx.analysisInput.epochs : [],
+        groupNames: design === 'multi' && ctx.mode === 'summary' ? groups.map(group => group.name) : [],
+        signal: controller.signal, onStatus: message => job.update(message)
+      });
+      let { points } = computed;
       if(ticket!==version)return;
       await job.step('Preparazione dei risultati statistici…');if(ticket!==version)return;
       const labels=ctx.mode==='summary'?ctx.analysisInput.epochs:matrix.times.map(fmt);
       const summaryGroups=design!=='multi'?[{name:'Campione statistico',subjects}]:groups.map((g,i)=>({name:g.name,subjects:subjects.filter(s=>s.groupIndex===i)}));
-      const traces=summaryGroups.map((g,i)=>{const columns=matrix.times.map((_,j)=>g.subjects.map(s=>s.values[j]));return {name:`${g.name} (N=${g.subjects.length}) · IC 95%`,color:colors[i%colors.length],bold:true,x:matrix.times,y:columns.map(C.mean),band:columns.map(A.ci95)};});
+      const traces = summaryGroups.map((group, index) => {
+        const summary = computed.groups[index];
+        return {
+          name: group.name + ' (N=' + group.subjects.length + ') · IC 95%',
+          color: colors[index % colors.length], bold: true, x: matrix.times,
+          y: summary.map(point => point.mean),
+          band: summary.map(point => point.margin)
+        };
+      });
       if(ctx.mode==='series'){
         points=points.map((point,index)=>{
           const means=traces.map(trace=>trace.y[index]);
@@ -526,15 +676,71 @@
           return {...point,magnitude};
         });
       }
-      results=points.map((p,i)=>({...p,label:within?p.label:labels[i],n:subjects.length}));
-      posthoc=posthoc.map(p=>({...p,epochA:labels[p.epochIndex],epochB:labels[p.epochIndex],label:`${labels[p.epochIndex]} · ${p.groupA} − ${p.groupB}`}));
+      results = clusterMode
+        ? computed.clusters.map(cluster => ({ ...cluster, kind: 'cluster', n: subjects.length }))
+        : points.map((p, index) => ({
+          ...p, n: subjects.length, index: within ? null : index, label: within ? p.label : labels[index],
+          kind: within ? (p.epochA ? 'paired' : 'repeated') : design === 'one' ? 'one' : 'groups'
+        }));
+      const posthoc = (computed.posthoc ?? []).map(p => ({
+        ...p, kind: 'posthoc', index: p.epochIndex, epochA: labels[p.epochIndex], epochB: labels[p.epochIndex],
+        label: labels[p.epochIndex] + ' · ' + p.groupA + ' − ' + p.groupB
+      }));
       results.push(...posthoc);
-      resultMeta={view:ctx.mode,metric:ctx.metric,epoch:ctx.mode==='series'?ctx.epoch:'',aggregation:ctx.mode==='summary'?$('aggregation').value:'',normalization:ctx.o.norm,baseline:ctx.o.norm==='none'?'':ctx.o.baseline,baseline_from:Number.isFinite(ctx.o.baseFrom)?ctx.o.baseFrom:'',baseline_to:Number.isFinite(ctx.o.baseTo)?ctx.o.baseTo:'',mad_scale:ctx.o.scaled?1.4826:1,analysis_from:Number.isFinite(ctx.o.from)?ctx.o.from:'',analysis_to:Number.isFinite(ctx.o.to)?ctx.o.to:'',design,null_value:within?'':nullValue,permutations,seed,correction:within?'max-|T| (post-hoc only)':design==='one'?'max-abs-T':'max-F',family:within?'all epoch pairs for selected metric':ctx.mode==='series'?'all tested times':'all tested epochs',included_subjects:subjects.map(s=>s.subject).join('; '),manually_excluded_subjects:manuallyExcluded.map(r=>r.subject).join('; '),excluded_subjects:ctx.records.filter(r=>!subjects.some(s=>s.id===r.id)).map(r=>r.subject).join('; '),group_assignments:design==='multi'?subjects.map(s=>`${s.subject}:${groups[s.groupIndex].name}`).join('; '):'',grid_step:ctx.mode==='series'?testAlignment.step:'',max_gap:ctx.o.maxGap??'auto:3*native_median_step',interpolation:ctx.mode==='series'?(ctx.analysisInput.alignmentOptions?.method ?? ''):'',outlier_method:$(ctx.mode==='series'?'outlierSeries':'outlierSummary').value};
+      resultMeta={view:ctx.mode,metric:ctx.metric,epoch:ctx.mode==='series'?ctx.epoch:'',aggregation:ctx.mode==='summary'?$('aggregation').value:'',normalization:ctx.o.norm,baseline:ctx.o.norm==='none'?'':ctx.o.baseline,baseline_from:Number.isFinite(ctx.o.baseFrom)?ctx.o.baseFrom:'',baseline_to:Number.isFinite(ctx.o.baseTo)?ctx.o.baseTo:'',mad_scale:ctx.o.scaled?1.4826:1,analysis_from:Number.isFinite(ctx.o.from)?ctx.o.from:'',analysis_to:Number.isFinite(ctx.o.to)?ctx.o.to:'',design,null_value:within?'':nullValue,permutations,seed,engine:'webR / permuco',resamples:computed.resamples,correction:clusterMode?'cluster-mass':within?'max-|T| (post-hoc only)':design==='one'?'max-abs-T':'max-F',family:within?'all epoch pairs for selected metric':ctx.mode==='series'?'all tested times':'all tested epochs',included_subjects:subjects.map(s=>s.subject).join('; '),manually_excluded_subjects:manuallyExcluded.map(r=>r.subject).join('; '),excluded_subjects:ctx.records.filter(r=>!subjects.some(s=>s.id===r.id)).map(r=>r.subject).join('; '),group_assignments:design==='multi'?subjects.map(s=>`${s.subject}:${groups[s.groupIndex].name}`).join('; '):'',grid_step:ctx.mode==='series'?testAlignment.step:'',max_gap:ctx.o.maxGap??'auto:3*native_median_step',interpolation:ctx.mode==='series'?(ctx.analysisInput.alignmentOptions?.method ?? ''):'',outlier_method:$(ctx.mode==='series'?'outlierSeries':'outlierSummary').value};
       const categories=ctx.mode==='summary'?labels:null;
-      ctx.plot(traces,{target:'statsGroupPlot',significancePoints:categories?[]:points,significanceStep:testAlignment?.step,title:'Medie dei gruppi e intervalli di confidenza al 95%',categories,bars:!!categories,comparisons:within?repeated.comparisons:design==='multi'?posthoc:points.map((p,i)=>({...p,epochA:labels[i],epochB:labels[i],single:true,label:`${labels[i]} contro ${nullValue}`,correction:'max-|T| sulle epoche'})),xLabel:categories?'Epoca / stimolo':'Tempo [s]'});
-      displayResults();
-      globalThis.MetricsSignificantMedia?.show(results, resultMeta, index => {
-        const point = points[index];
+      Object.assign(resultMeta, {
+        confidence_level: 0.95, ci_method: 'pointwise Student t',
+        analysis_samples: matrix.times.length, dropped_times: matrix.dropped ?? '',
+        selected_epochs: JSON.stringify(categories ?? [ctx.epoch]),
+        cluster_threshold: computed.threshold ?? '', webr_version: computed.software.webR,
+        r_version: computed.software.R, permuco_version: computed.software.permuco,
+        rng: 'Mersenne-Twister / Inversion / Rejection'
+      });
+      report = {
+        labels, times: matrix.times, subjects, breaks, summaries: computed.groups, software: computed.software,
+        groupNames: summaryGroups.map(group => group.name), groupSizes: summaryGroups.map(group => group.subjects.length),
+        render: renderStatPlot
+      };
+      updateResultThresholds();
+      renderStatPlot();
+      $('exportStats').disabled = false;
+      $('exportStatsInput').disabled = false;
+      $('statsStatus').textContent = '';
+      function renderStatPlot() {
+        const clusterRanges = clusterMode
+          ? globalThis.MetricsSignificantMedia.rankIntervals(results.filter(cluster => cluster.pAdjusted <= resultMeta.alpha).map(cluster => {
+            let peak = cluster.startIndex, magnitude = -1;
+            for (let index = cluster.startIndex; index <= cluster.endIndex; index++) {
+              const means = traces.map(trace => trace.y[index]);
+              const difference = design === 'one' ? Math.abs(means[0] - nullValue) : Math.max(...means) - Math.min(...means);
+              if (difference > magnitude) { peak = index; magnitude = difference; }
+            }
+            const pad = (testAlignment?.step || 0) / 2;
+            return { ...cluster, peak: matrix.times[peak], magnitude, cluster: true,
+              left: cluster.start - pad, right: cluster.end + pad,
+              label: fmt(cluster.start) + '–' + fmt(cluster.end) + ' s · p cluster ' + fmt(cluster.pAdjusted),
+              summary: describePreview(peak, cluster.pAdjusted, true)
+            };
+          }))
+          : null;
+        $('statsGroupPlot').replaceChildren();
+        ctx.plot(traces, {
+          target: 'statsGroupPlot', significancePoints: categories ? [] : points,
+          significanceRanges: clusterRanges, significanceStep: testAlignment?.step, pThresholds,
+          title: 'Medie dei gruppi e intervalli di confidenza al 95%', categories, bars: !!categories,
+          comparisons: within ? computed.paired : design === 'multi' ? posthoc : points.map((point, i) => ({
+            ...point, epochA: labels[i], epochB: labels[i], single: true,
+            label: labels[i] + ' contro ' + nullValue, correction: 'max-|T| sulle epoche'
+          })),
+          xLabel: categories ? 'Epoca / stimolo' : 'Tempo [s]'
+        });
+        displayResults();
+        if (clusterMode) globalThis.MetricsSignificantMedia.showRanges(clusterRanges, resultMeta);
+        else globalThis.MetricsSignificantMedia?.show(results, resultMeta, index => describePreview(index, points[index].pAdjusted));
+      }
+
+      function describePreview(index, pAdjusted, cluster = false) {
         const estimates = traces.map((trace, groupIndex) => {
           const difference = design === 'one' && nullValue !== 0;
           return {
@@ -544,16 +750,88 @@
             halfWidth: trace.band[index]
           };
         });
-        return { time: point.time, estimates, pAdjusted: point.pAdjusted, omnibus: design === 'multi' };
-      });
-      $('exportStats').disabled = false;
-      $('statsStatus').textContent = '';
+        return { time: matrix.times[index], estimates, pAdjusted, cluster, omnibus: design === 'multi' };
+      }
     }catch(e){if(ticket===version)$('statsStatus').textContent=e.message;}
-    finally{job.end();if(ticket===version)$('runStats').disabled=!context;}
+    finally {
+      job.end();
+      if (activeAnalysis === controller) activeAnalysis = null;
+      if (ticket === version) $('runStats').disabled = !context;
+    }
   };
-  $('exportStats').onclick=()=>{
-    if(!results.length)return;return MetricsBusy.run('Preparazione del CSV delle analisi…',async()=>{const rows=results.map(r=>({...resultMeta,target:r.label,family:r.groupA?'all group pairs × selected epochs':resultMeta.family,test:r.test||(resultMeta.design==='one'?'t':'F omnibus'),epoch_a:r.epochA||'',epoch_b:r.epochB||'',mean_difference:r.meanDifference??'',df1:r.df1??'',df2:r.df2??'',group_a:r.groupA||'',group_b:r.groupB||'',n_a:r.nA??'',n_b:r.nB??'',statistic:r.statistic,p_uncorrected:r.pUncorrected,p_adjusted:r.pAdjusted,correction:r.correction||resultMeta.correction,n:r.n})),headers=Object.keys(rows[0]);
-    const quote=x=>{let v=x===null||x===undefined?'':String(x);if(typeof x==='string'&&/^[=+@\-\t\r]/.test(v))v="'"+v;return '"'+v.replaceAll('"','""')+'"';};
-    const csv='\uFEFF'+[headers,...rows.map(r=>headers.map(k=>r[k]))].map(r=>r.map(quote).join(',')).join('\r\n'),url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),a=el('a');a.href=url;a.download=`metrics-${currentMode}-permutation.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}).catch(error=>{$('statsStatus').textContent=error.message;});
+  function downloadCsv(filename, headers, rows) {
+    const quote = value => {
+      let string = value == null ? '' : String(value);
+      if (typeof value === 'string' && /^[=+@\-\t\r]/.test(string)) string = "'" + string;
+      return '"' + string.replaceAll('"', '""') + '"';
+    };
+    const csv = '\uFEFF' + [headers, ...rows].map(row => row.map(quote).join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], {type: 'text/csv;charset=utf-8'})), link = el('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  $('exportStats').onclick = () => {
+    if (!report) return;
+    const metadata = resultMeta, run = report, output = results;
+    return MetricsBusy.run('Preparazione del CSV delle analisi…', async () => {
+      const clusterMode = metadata.correction === 'cluster-mass';
+      const source = output.length ? output : [{ kind: 'cluster' }];
+      const rows = source.map(row => {
+        if (clusterMode) return {
+          ...metadata, test: row.n ? inferentialSettings.cluster[0] : 'Nessun cluster',
+          resampling: metadata.design === 'one' ? 'sign flips by subject' : 'group-label permutations',
+          formation_alpha: .05, mass_function: metadata.design === 'one' ? 'sum(t^2)' : 'sum(F)',
+          start_s: row.start, end_s: row.end, samples: row.samples,
+          direction: row.n ? clusterDirection(row.direction) : '', df1: row.df1, df2: row.df2,
+          cluster_mass: row.statistic, peak_time_s: run.times[row.peakIndex], peak_statistic: row.peakStatistic,
+          p_cluster: row.pAdjusted, n: row.n ?? run.subjects.length
+        };
+        const { kind, index } = row;
+        const indices = index === null ? run.labels.map((_, i) => i)
+          .filter(i => kind !== 'paired' || [row.epochA, row.epochB].includes(run.labels[i])) : [index];
+        const groups = kind === 'posthoc' ? [row.groupIndexA, row.groupIndexB] : run.groupNames.map((_, i) => i);
+        const descriptives = indices.flatMap(i => groups.map(group => {
+          const { mean, sd, margin } = run.summaries[group][i];
+          return { target: metadata.view === 'series' ? run.times[i] : run.labels[i],
+            group: run.groupNames[group], n: run.groupSizes[group], mean, sd,
+            ci_low: mean - margin, ci_high: mean + margin };
+        }));
+        return {
+          ...metadata, resamples: row.resamples ?? metadata.resamples, target: row.label,
+          time_s: metadata.view === 'series' ? run.times[index] : '',
+          family: kind === 'posthoc' ? 'all group pairs × selected epochs'
+            : kind === 'repeated' ? 'all selected epochs (single omnibus)' : metadata.family,
+          test: row.test || inferentialSettings[kind][0], resampling: inferentialSettings[kind][1],
+          epoch_a: row.epochA, epoch_b: row.epochB, mean_difference: row.meanDifference,
+          std_error: row.se, contrast_ci_low: row.ciLow, contrast_ci_high: row.ciHigh,
+          effect_measure: kind === 'paired' ? 'Cohen dz' : kind === 'one' || kind === 'posthoc' ? 'Cohen d' : 'partial eta squared',
+          effect_size: row.d ?? row.eta, ms_effect: row.msEffect, ms_error: row.msError, df1: row.df1, df2: row.df2,
+          group_a: row.groupA, group_b: row.groupB, n_a: row.nA, n_b: row.nB,
+          statistic: row.statistic, p_uncorrected: row.pUncorrected, p_adjusted: row.pAdjusted,
+          correction: row.correction || metadata.correction, n: row.n, descriptives_json: JSON.stringify(descriptives)
+        };
+      });
+      const headers = Object.keys(rows[0]);
+      downloadCsv('metrics-' + metadata.view + '-permutation.csv', headers, rows.map(row => headers.map(key => row[key])));
+    }).catch(error => { $('statsStatus').textContent = error.message; });
+  };
+
+  $('exportStatsInput').onclick = () => {
+    if (!report) return;
+    const run = report, metadata = resultMeta;
+    return MetricsBusy.run('Preparazione dei dati del test…', async () => {
+      const series = metadata.view === 'series';
+      const headers = ['subject_index', 'subject_id', 'subject', 'group_index', 'group',
+        'sample_index', series ? 'time_s' : 'epoch', 'break_before', 'value'];
+      const rows = run.subjects.flatMap((subject, subjectIndex) => subject.values.map((value, index) => {
+        const group = metadata.design === 'multi' ? subject.groupIndex : 0;
+        return [subjectIndex + 1, subject.id, subject.subject, group + 1, run.groupNames[group],
+          index + 1, series ? run.times[index] : run.labels[index], run.breaks[index], value];
+      }));
+      downloadCsv('metrics-' + metadata.view + '-test-input.csv', headers, rows);
+    }).catch(error => { $('statsStatus').textContent = error.message; });
   };
 })();
