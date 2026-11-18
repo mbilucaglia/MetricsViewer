@@ -40,7 +40,7 @@ test('per-epoch video switching, replacement, removal and dataset cleanup',()=>{
   t.assign(1,'b.webm');assert.equal(t.video.src,a);
   t.api.setContext(['A','B'],'B','series');assert.notEqual(t.video.src,a);assert.equal(t.video.currentTime,0);
   const b=t.video.src;t.assign(1,'b2.mp4');assert.ok(t.revoked.includes(b));
-  const b2=t.video.src;t.open();const selected=t.get('videoAssignments').children[1].children[2].children[0];selected.checked=true;selected.onchange();t.confirm();assert.ok(t.revoked.includes(b2));assert.equal(t.video.hidden,true);
+  const b2=t.video.src;t.open();const selected=t.get('videoAssignments').children[1].children.at(-1).children[0];selected.checked=true;selected.onchange();t.confirm();assert.ok(t.revoked.includes(b2));assert.equal(t.video.hidden,true);
   t.api.setContext([],'','series');assert.ok(t.revoked.includes(a));assert.equal(t.get('videoAssignments').children.length,0);
 });
 test('playback updates all cursors and only the time axis seeks the video',()=>{
@@ -113,7 +113,7 @@ test('cancel leaves the original video assigned and its URL in use',()=>{
   assert.equal(t.video.src,original);
   assert.equal(t.api.source('A').name,'original.mp4');
   t.cancel();
-  assert.equal(t.get('videoAssignments').children[0].children[1].textContent,'original.mp4');
+  assert.equal(t.get('videoAssignments').children[0].children.at(-2).textContent,'original.mp4');
   assert.equal(t.revoked.length,0);
 });
 
@@ -134,4 +134,18 @@ test('HTTP and uploaded media exports keep their original authorized source',asy
  t.window.location.protocol='file:';t.api.setContext(['A'],'A','series');t.assign(0,'uploaded.mp4');
  assert.equal(await t.api.exportSource('A'),t.api.source('A'));
  assert.ok((await t.api.exportSource('A')).url.startsWith('blob:'));
+});
+
+test('playhead stays visible from play until the first sample without changing zoom visibility',()=>{
+ const t=setup();t.api.setContext(['A'],'A','series');t.assign(0,'a.mp4');
+ const full=t.chart({min:.5,max:20,showStart:true});
+ const zoomed=t.chart({min:5,max:10,showStart:false});
+ for(const time of [0,.01,.2,.49,.5,.75]){
+  t.video.currentTime=time;t.video.handlers.timeupdate();
+  assert.equal(full.children[0].attrs.visibility,'visible');
+  assert.equal(full.children[2].attrs.visibility,'visible');
+  assert.equal(zoomed.children[0].attrs.visibility,'hidden');
+  if(time<=.5)assert.equal(full.children[0].attrs.x1,'50');
+ }
+ t.video.currentTime=21;t.video.handlers.timeupdate();assert.equal(full.children[0].attrs.visibility,'hidden');
 });

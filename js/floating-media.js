@@ -112,7 +112,7 @@
         top.append(title, dismissPopup);
         const body = doc.createElement('div');
         body.className = 'settings-dialog-body';
-        const video = row.querySelector('video');
+        const video = row.querySelector('video, img.static-stimulus');
         const initialVolume = video?.volume;
         video?.pause();
         const moved = [];

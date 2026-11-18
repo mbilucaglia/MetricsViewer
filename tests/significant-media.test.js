@@ -105,3 +105,11 @@ test('temporal bands use the configured threshold, including its exact boundary'
   assert.deepEqual(bands(points, 1), []);
   assert.deepEqual(bands(points, 1, .1).map(({ start, end }) => [start, end]), [[0, 1], [3, 3]]);
 });
+
+test('playback spans sample cells and cluster boundaries without adding context',()=>{
+ const {playbackRange}=require('../js/significant-media');
+ assert.deepEqual(playbackRange({start:1,end:1,peak:1},.5),{start:.75,end:1.25,peak:1});
+ assert.deepEqual(playbackRange({start:1,end:2,peak:1.5,left:.75,right:2.25},.5),{start:.75,end:2.25,peak:1.5,left:.75,right:2.25});
+ assert.equal(playbackRange({start:0,end:0},.5).start,0);
+ assert.deepEqual(playbackRange({start:1,end:1,peak:1},NaN),{start:1,end:1,peak:1});
+});

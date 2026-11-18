@@ -27,21 +27,29 @@
   const colors=['#514691','#248d92','#c17b40','#b55488','#608a4a'];
   const el=(tag,text,cls)=>{const e=document.createElement(tag);if(tag==='button')e.type='button';if(tag==='th')e.setAttribute('scope','col');if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
   const fmt=x=>C.finite(x)?Number(x.toPrecision(6)).toString():x===Infinity?'∞':x===-Infinity?'−∞':'—';
-  const designs={series:'one',summary:'within'};let designMode='series';
+  const modelFactors={series:'none',summary:'none'};let designMode='series';
   const significantOnlyByMode = { series: true, summary: false };
+  function deriveModel(){
+    const factor=$('betweenFactor').value||'none';
+    const epochs=currentMode==='summary'?(context?.analysisInput.epochs??[]):[];
+    const repeated=currentMode==='summary'&&epochs.length>1;
+    $('design').value=factor==='stimulus'&&currentMode==='summary'?(repeated?'between':'one'):
+      factor==='assigned'?(repeated?'mixed':'multi'):(repeated?'within':'one');
+    $('withinFactorDescription').textContent=currentMode==='series'?'Segnale nel tempo':
+      factor==='stimulus'?'Nessuna misura ripetuta · uno stimolo per soggetto':
+      epochs.length?epochs.length+' '+(epochs.length===1?'misura':'misure')+' · '+epochs.join(', '):'Seleziona le epoche nel riepilogo';
+  }
   function syncDesign(){
-    if (designMode !== currentMode) {
-      designs[designMode] = $('design').value;
-      designMode = currentMode;
-      $('design').value = designs[currentMode];
-      $('significantOnly').checked = significantOnlyByMode[currentMode];
+    if(designMode!==currentMode){
+      modelFactors[designMode]=$('betweenFactor').value||'none';
+      designMode=currentMode;
+      $('betweenFactor').value=modelFactors[currentMode];
+      $('significantOnly').checked=significantOnlyByMode[currentMode];
     }
-    $('temporalCorrectionControl').hidden = currentMode !== 'series';
-    for (const value of ['within', 'mixed', 'between']) {
-      const option = $('design').querySelector('[value="' + value + '"]');
-      option.hidden = currentMode !== 'summary';
-      option.disabled = currentMode !== 'summary';
-    }
+    const stimulus=$('betweenFactor').querySelector('[value="stimulus"]');
+    if(stimulus){stimulus.hidden=currentMode!=='summary';stimulus.disabled=currentMode!=='summary';}
+    $('temporalCorrectionControl').hidden=currentMode!=='series';
+    deriveModel();
   }
   function methodDescription(){
     if (previousSettings) return;
@@ -75,20 +83,11 @@
       $(tabId).classList.toggle('is-active', active);
       $(tabId).setAttribute('aria-pressed', String(active));
     }
+    $('openStatsSettings').hidden = subviews[currentMode] !== 'stats';
     $('statsTitle').textContent = `Analisi statistiche · ${currentMode === 'series' ? 'Serie temporali' : 'Riepilogo temporale'}`;
   }
   let activeAnalysis;
   const statsDetails = $('statsDetails');
-  const showStatsDetails = $('showStatsDetails');
-  statsDetails.addEventListener('toggle', () => {
-    showStatsDetails.setAttribute('aria-expanded', String(statsDetails.open));
-  });
-  showStatsDetails.onclick = () => {
-    if (!report) return;
-    statsDetails.open = true;
-    statsDetails.querySelector('summary').focus({ preventScroll: true });
-    statsDetails.scrollIntoView({ block: 'start' });
-  };
   function clearResults(message='Impostazioni aggiornate: esegui nuovamente l’analisi.'){
     activeAnalysis?.abort();
     activeAnalysis = null;
@@ -96,7 +95,6 @@
     $('exportStatsInput').disabled = true;
     globalThis.MetricsSignificantMedia?.clear();
     statsDetails.open = false;
-    showStatsDetails.disabled = true;
     version++;results=[];resultMeta=null;$('statsResults').replaceChildren();$('statsGroupPlot').replaceChildren();$('statsPPlot').replaceChildren();$('exportStats').disabled=true;$('runStats').disabled=!context;$('statsStatus').textContent=message;
   }
   function loadGroupSettings() {
@@ -160,12 +158,14 @@
   }
 
   function groupEditor() {
+    deriveModel();
     methodDescription();
     updateStatsOptionsSummary();
     const design = $('design').value;
     $('groupEditor').hidden = !['multi', 'mixed'].includes(design);
     $('mixedDesignControls').hidden = design !== 'mixed';
     $('nullValue').disabled = design !== 'one';
+    $('nullValue').parentElement.hidden = design !== 'one';
     $('groupNames').replaceChildren();
     if (!['multi', 'mixed'].includes(design)) return;
     for (const group of groups) {
@@ -750,7 +750,7 @@
   $('restoreIsolation').onclick=()=>{isolation.reset();if(context)updateIsolationControls(context);};
   function refreshOutlierFeedback(){if(!context)return;const ctx=context;return MetricsBusy.run('Ricerca degli outlier in corso…',async()=>{if(context===ctx)updateOutliers(ctx);}).catch(error=>{$('outlierContext').textContent=error.message;});}
   $('outlierSeries').onchange=refreshOutlierFeedback;$('outlierSummary').onchange=refreshOutlierFeedback;
-  const statsSettingsIds = ['design', 'nullValue', 'permutations', 'seed', 'temporalCorrection'];
+  const statsSettingsIds = ['design', 'nullValue', 'permutations', 'seed', 'temporalCorrection', 'betweenFactor'];
   function validThresholds(thresholds) {
     if (!thresholds) return false;
     const { single, double, triple } = thresholds;
@@ -790,6 +790,7 @@
       if (statsSettingsIds.some(id => $(id).reportValidity?.() === false)) return false;
       const nextThresholds = Object.fromEntries(Object.entries(thresholdFields).map(([key, id]) => [key, Number($(id).value)]));
       if (!validThresholds(nextThresholds)) {
+        $('statsThresholds').open = true;
         $('pThresholdError').hidden = false;
         return false;
       }
@@ -866,7 +867,8 @@
     updateStatsSample();
   };
 
-  $('design').onchange=()=>{if (!previousSettings) clearResults();groupEditor();updateStatsSample();};
+  $('betweenFactor').onchange=()=>{deriveModel();if(!previousSettings)clearResults();groupEditor();updateStatsSample();};
+  $('design').onchange=()=>{$('betweenFactor').value=({one:'none',within:'none',multi:'assigned',mixed:'assigned',between:'stimulus'})[$('design').value];if (!previousSettings) clearResults();groupEditor();updateStatsSample();};
   $('addGroup').onclick=()=>{groups.push({id:`g${nextGroup}`,name:`Gruppo ${nextGroup++}`});groupSettingsChanged();};
   function clusterDirection(direction) {
     return direction > 0 ? 'Positiva' : direction < 0 ? 'Negativa' : 'Omnibus';
@@ -886,7 +888,6 @@
   function displayResults() {
     const output = $('statsResults');
     output.replaceChildren();
-    showStatsDetails.disabled = !report;
     if (!report) return;
     const visible = $('significantOnly').checked ? results.filter(row => Number.isFinite(row.pAdjusted) && row.pAdjusted <= resultMeta.alpha) : results;
     const type = resultMeta.view === 'series' ? 'Tempo [s]' : 'Epoca';
@@ -948,7 +949,7 @@
     displayResults();
   };
   $('runStats').onclick=async()=>{
-    if(!context)return;const ctx=context;clearResults('Preparazione dei test…');const ticket=version,design=$('design').value,permutations=Number($('permutations').value),nullValue=Number($('nullValue').value),seed=Number($('seed').value);
+    if(!context)return;deriveModel();const ctx=context;clearResults('Preparazione dei test…');const ticket=version,design=$('design').value,permutations=Number($('permutations').value),nullValue=Number($('nullValue').value),seed=Number($('seed').value);
     const controller = new AbortController();
     activeAnalysis = controller;
     const job = MetricsBusy.start('Preparazione dell’analisi statistica…', {onCancel: () => {
@@ -972,7 +973,7 @@
         matrix = A.completeTimeMatrix(items, testAlignment);
       } else {
         if (design === 'mixed') {
-          const epochs = mixedEpochSelection ?? ctx.analysisInput.epochs;
+          const epochs = ctx.analysisInput.epochs;
           if (epochs.length < 2) throw new Error('Seleziona almeno due epoche ripetute nelle Opzioni del disegno misto.');
           const rows = epochs.flatMap(epoch => ctx.prepared(eligible, epoch, ctx.metric, ctx.o, []).map(item => ({
             subject: item.r.subject, epoch,

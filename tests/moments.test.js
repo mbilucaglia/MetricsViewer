@@ -21,3 +21,14 @@ test('60 Hz detection preserves sample precision and rejects invalid settings',(
   const result=detect([1/60,2/60,3/60],[0,3,0],{criterion:'peaks',step:1/60})[0];assert.equal(result.peak,2/60);
   assert.throws(()=>detect([0],[1],{count:51}));assert.throws(()=>detect([0],[1],{before:-1}));
 });
+
+test('default peak clips cover exactly one temporal cell at 0.5 s and 60 Hz',()=>{
+ for(const step of [.5,1/60]){
+  const range=detect([0,step,2*step],[0,5,0],{step,criterion:'peaks'})[0];
+  assert.ok(Math.abs(range.start-step/2)<1e-12);
+  assert.ok(Math.abs(range.end-1.5*step)<1e-12);
+  assert.ok(Math.abs(range.end-range.start-step)<1e-12);
+ }
+ assert.equal(detect([0,1],[5,0],{step:1})[0].start,0);
+ assert.equal(detect([2],[5])[0].end,2);
+});

@@ -40,7 +40,7 @@
           <div class="import-copy">
             <h2 class="section-title">Importa metriche</h2>
             <p class="panel-note">
-              Trascina uno o più file JSON o XLSX legacy.
+              Trascina dati JSON/XLSX, video o immagini degli stimoli.
             </p>
           </div>
           <div class="drop-zone-actions">
@@ -48,10 +48,10 @@
               ><span id="fileLabel">Scegli file</span><input
               id="files"
               type="file"
-              accept=".json,.xlsx,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              accept=".json,.xlsx,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,video/*,image/*"
               multiple /></label><button type="button" id="demo">Carica esempio</button><button type="button" id="clear" hidden>Svuota dataset</button>
             <button id="openVideoAssignments" type="button" aria-haspopup="dialog" aria-controls="videoAssignmentDialog" hidden>
-              Associa video alle epoche
+              Associa stimoli alle epoche
             </button>
             <button id="openImportedFiles" type="button" aria-haspopup="dialog" aria-controls="importedFilesDialog" hidden>File caricati</button>
           </div>
@@ -94,9 +94,12 @@
                   aria-controls="visualPanel"
                 >
                 Visualizzatore</button>
-              <button type="button" id="statsTab" aria-pressed="false" aria-controls="statsPanel">
-                Analisi statistiche
-              </button>
+              <span class="stats-tab-actions">
+                <button type="button" id="statsTab" aria-pressed="false" aria-controls="statsPanel">
+                  Analisi statistiche
+                </button>
+                <button id="openStatsSettings" class="stats-tab-options" type="button" aria-label="Opzioni delle analisi statistiche" title="Opzioni delle analisi statistiche" aria-haspopup="dialog" aria-controls="statsSettingsDialog" hidden><span aria-hidden="true">⋯</span></button>
+              </span>
             </nav>
           </div>
           <section class="card settings" aria-label="Impostazioni analisi">
@@ -205,12 +208,10 @@
                   <h2 id="statsTitle">Analisi statistiche · Time series</h2>
                   <span id="statsOptionsSummary" class="panel-note"></span>
                   <div class="stats-run-actions">
-                    <button id="openStatsSettings" type="button" aria-haspopup="dialog" aria-controls="statsSettingsDialog">Opzioni</button>
                     <button id="runStats" type="button" disabled>Esegui analisi</button>
                   </div>
                   <div class="stats-export-actions">
                     <button id="openAllStatsMoments" type="button" aria-controls="statsMomentsDock" title="Apri tutte le anteprime" disabled>Disegna tutti</button>
-                    <button id="showStatsDetails" type="button" aria-controls="statsDetails" aria-expanded="false" disabled>Mostra dettagli</button>
                     <button id="exportStats" type="button" disabled>Esporta analisi CSV</button>
                   </div>
                 </div>
@@ -235,7 +236,7 @@
                   ></div>
                 <section id="significantMedia" hidden aria-labelledby="significantMediaTitle">
                   <h3 id="significantMediaTitle">Momenti significativi nel video</h3>
-                  <p class="panel-note">Istanti significativi consecutivi, raggruppati senza attraversare lacune. Ogni frame corrisponde alla differenza massima nell’intervallo. Un istante isolato produce un frame; le clip vanno dal primo all’ultimo istante significativo.</p>
+                  <p class="panel-note">Istanti significativi consecutivi, raggruppati senza attraversare lacune. Ogni frame corrisponde alla differenza massima nell’intervallo. Anche un istante isolato può essere riprodotto per la durata della sua cella temporale; le clip dei cluster seguono i confini della fascia.</p>
                   <p class="panel-note">Clip con audio originale, ricodificate in tempo reale (circa 30 fps): mantieni la scheda visibile. Gli intervalli descrivono i campioni significativi, non un test statistico sull’intera clip. Il CSV delle analisi include tutti i punti per tracciabilità.</p>
                   <div id="significantIntervals"></div>
                   <p id="mediaStatus" role="status" aria-live="polite" class="panel-note"></p>
@@ -270,12 +271,13 @@
             <div class="workspace-sidebar" id="workspaceSidebar">
               <section id="videoCard" class="card stimulus-video-card" aria-labelledby="videoTitle">
                 <details class="disclosure" open>
-                  <summary id="videoTitle">Video sincronizzato</summary>
+                  <summary id="videoTitle">Stimolo sincronizzato</summary>
                   <div class="disclosure__body">
                     <p id="videoEpoch" class="video-epoch"></p>
-                    <video id="stimulusVideo" controls playsinline preload="metadata" hidden aria-label="Video dello stimolo"></video>
-                    <p id="videoEmpty" class="panel-note">Usa «Associa video alle epoche» nella barra di importazione.</p>
-                    <p class="panel-note">Tempo: <output id="videoTime">0.00 s</output>. Trascina il cursore sull’asse dei tempi per spostare il video.</p>
+                    <div id="stimulusMediaFrame"><video id="stimulusVideo" controls playsinline preload="metadata" hidden aria-label="Video dello stimolo"></video></div>
+                    <div id="staticStimulusControls" class="static-stimulus-controls" hidden><button id="staticStimulusPlay" type="button">▶ Riproduci</button><input id="staticStimulusSeek" type="range" min="0" max="1" step="any" value="0" aria-label="Tempo dello stimolo statico"><output id="staticStimulusDuration"></output></div>
+                    <p id="videoEmpty" class="panel-note">Carica video o immagini da «Aggiungi file» e associali alle epoche.</p>
+                    <p class="panel-note">Tempo: <output id="videoTime">0.00 s</output>. Trascina il cursore sull’asse dei tempi per spostare lo stimolo.</p>
                     <p id="videoError" role="status" class="panel-note"></p>
                   </div>
                 </details>
@@ -293,6 +295,7 @@
               <aside class="card sample-panel">
                 <h2>Soggetti</h2>
                 <p id="counts" class="panel-note">Nessun soggetto.</p>
+                <div class="subject-toolbar">
                 <div class="selection-actions">
                   <button type="button" id="all">Seleziona tutti</button><button type="button" id="none">Deseleziona</button><button
                       id="isolateOutliers"
@@ -337,6 +340,7 @@
                   </label>
                 </div>
                 <p id="subjectFilterCount" class="panel-note" role="status"></p>
+                </div>
                 <div id="subjectListHeading" class="subject-list-columns" aria-hidden="true" hidden>
                   <span>Soggetto</span><span>Stimoli con dati</span>
                 </div>
@@ -349,6 +353,7 @@
             </div>
           </div>
         </div>
+        <div id="workspaceHeightDivider" class="workspace-height-divider" role="separator" aria-orientation="horizontal" aria-label="Altezza dei pannelli" title="Trascina per ridimensionare · doppio clic per altezza automatica" aria-controls="workspace" tabindex="0" hidden></div>
         <details class="disclosure card methods">
           <summary>Come vengono elaborati i dati</summary>
           <div class="disclosure__body">
@@ -506,7 +511,7 @@
       </header>
       <div class="settings-dialog-body">
       <div class="options-grid">
-        <div class="control-block">
+        <div hidden>
           <label for="design">Tipo di test</label><select id="design">
             <option value="within" hidden disabled>
               Entro soggetto · confronto tra epoche
@@ -521,11 +526,23 @@
             </option>
           </select>
         </div>
+        <div class="control-block">
+          <label for="withinFactorDescription">Misure entro soggetto</label>
+          <output id="withinFactorDescription"></output>
+        </div>
+        <div class="control-block">
+          <label for="betweenFactor">Fattore tra soggetti</label>
+          <select id="betweenFactor">
+            <option value="none" selected>Nessuno · un solo gruppo</option>
+            <option value="assigned">Gruppi del campione</option>
+            <option value="stimulus">Stimolo presentato</option>
+          </select>
+        </div>
         <div class="control-block" id="temporalCorrectionControl">
-          <label for="temporalCorrection">Correzione</label>
+          <label for="temporalCorrection">Metodo temporale</label>
           <select id="temporalCorrection">
+            <option value="cluster" selected>Massa dei cluster</option>
             <option value="maxT">Max-T per istante</option>
-            <option value="cluster">Massa dei cluster</option>
           </select>
         </div>
         <div class="control-block">
@@ -555,11 +572,11 @@
         </div>
       </div>
       <div id="mixedDesignControls" hidden>
-        <div class="control-block">
-          <label for="mixedEpochs">Epoche ripetute negli stessi soggetti</label>
+        <div class="control-block" hidden>
+          <label for="mixedEpochs">Livelli del fattore entro soggetto</label>
           <select id="mixedEpochs" multiple></select>
         </div>
-        <p class="panel-note">Seleziona le epoche comuni da confrontare, come Pre e Post. Il gruppo di ogni soggetto si assegna nel Campione statistico.</p>
+        <p class="panel-note">Le misure entro soggetto corrispondono alle epoche selezionate nel riepilogo. Assegna i gruppi nel Campione statistico.</p>
         <details class="disclosure">
           <summary>Assegna due gruppi dagli stimoli visti</summary>
           <div class="disclosure__body">
@@ -570,25 +587,7 @@
           </div>
         </details>
       </div>
-      <fieldset class="stats-p-thresholds">
-        <legend>Soglie del p-value finale</legend>
-        <div class="stats-p-thresholds__fields">
-          <div class="control-block">
-            <label for="pThresholdSingle">*</label>
-            <input id="pThresholdSingle" type="number" min="0" max="1" step="any" required />
-          </div>
-          <div class="control-block">
-            <label for="pThresholdDouble">**</label>
-            <input id="pThresholdDouble" type="number" min="0" max="1" step="any" required />
-          </div>
-          <div class="control-block">
-            <label for="pThresholdTriple">***</label>
-            <input id="pThresholdTriple" type="number" min="0" max="1" step="any" required />
-          </div>
-        </div>
-        <p id="pThresholdNonSignificant" class="panel-note"></p>
-        <p id="pThresholdError" class="panel-note" role="alert" hidden>Scegli tre soglie distinte con 0 &lt; *** &lt; ** &lt; * &lt; 1.</p>
-      </fieldset>
+
       <details class="disclosure stats-sample">
         <summary>Campione statistico <span id="statsExcludedCount"></span></summary>
         <div class="disclosure__body">
@@ -614,6 +613,30 @@
           <div id="statsSampleList" role="group" aria-label="Soggetti del campione statistico"></div>
         </div>
       </details>
+      <details class="disclosure" id="statsThresholds">
+        <summary>P-value e soglie</summary>
+        <div class="disclosure__body">
+      <fieldset class="stats-p-thresholds">
+        <legend>Soglie del p-value finale</legend>
+        <div class="stats-p-thresholds__fields">
+          <div class="control-block">
+            <label for="pThresholdSingle">*</label>
+            <input id="pThresholdSingle" type="number" min="0" max="1" step="any" required />
+          </div>
+          <div class="control-block">
+            <label for="pThresholdDouble">**</label>
+            <input id="pThresholdDouble" type="number" min="0" max="1" step="any" required />
+          </div>
+          <div class="control-block">
+            <label for="pThresholdTriple">***</label>
+            <input id="pThresholdTriple" type="number" min="0" max="1" step="any" required />
+          </div>
+        </div>
+        <p id="pThresholdNonSignificant" class="panel-note"></p>
+        <p id="pThresholdError" class="panel-note" role="alert" hidden>Scegli tre soglie distinte con 0 &lt; *** &lt; ** &lt; * &lt; 1.</p>
+      </fieldset>
+        </div>
+      </details>
       </div>
       <footer class="settings-dialog-actions">
         <button type="button" data-dismiss>Annulla</button>
@@ -637,11 +660,12 @@
     </dialog>
     <dialog class="settings-dialog" id="videoAssignmentDialog" aria-labelledby="videoAssignmentTitle">
       <header class="settings-dialog-header">
-        <h2 id="videoAssignmentTitle" class="section-title">Associa video alle epoche</h2>
+        <h2 id="videoAssignmentTitle" class="section-title">Associa stimoli alle epoche</h2>
         <button type="button" class="settings-dialog-close" data-dismiss aria-label="Chiudi senza salvare">×</button>
       </header>
       <div class="settings-dialog-body">
-      <p class="panel-note">I video vanno riassociati dopo il ricaricamento.</p>
+      <p class="panel-note">Video e immagini restano disponibili durante la sessione. Per le immagini, la durata automatica coincide con la fine dell’epoca; puoi impostarla in secondi.</p>
+      <p id="stimulusLibrary" class="panel-note"></p>
       <div id="videoAssignments"></div>
       <p id="videoAssignmentError" class="danger" role="alert"></p>
       </div>
@@ -698,6 +722,7 @@
     <script src="js/floating-media.js"></script>
     <script src="js/significant-media.js"></script>
     <script src="js/statistics-ui.js"></script>
+    <script src="js/static-media.js"></script>
     <script src="js/video.js"></script>
     <script src="js/demo-data.js"></script>
     <script src="js/moments.js"></script>

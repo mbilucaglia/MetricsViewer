@@ -159,16 +159,19 @@
   }
   async function load(files){
     const list=[...files];if(!list.length)return;
+    const media=list.filter(file=>window.MetricsStaticMedia?.kind(file));
+    const dataFiles=list.filter(file=>!window.MetricsStaticMedia?.kind(file));
+    if(!dataFiles.length){if(media.length)window.MetricsVideo.importFiles(media);return;}
     const ticket=++generation;$('errors').textContent='';
     const job=MetricsBusy.start('Lettura metriche in corso…');
     try{
       const inputs=[];
-      for(const [index,file]of list.entries()){
+      for(const [index,file]of dataFiles.entries()){
         await job.step(`Lettura metriche in corso: ${file.name}`,{value:index,max:list.length});
         if(ticket!==generation)return;
         try {
           const extension = /\.(json|xlsx)$/i.exec(file.name)?.[1].toLowerCase();
-          if (!extension) throw new Error('Scegli un file JSON o XLSX.');
+          if (!extension) throw new Error('Scegli dati JSON/XLSX, video o immagini.');
           const contents = extension === 'xlsx' ? await file.arrayBuffer() : await file.text();
           await job.step(`Verifica delle metriche: ${file.name}`, {value:index,max:list.length});
           if (ticket !== generation) return;
@@ -186,6 +189,7 @@
       if(ticket!==generation)return;
       updateSources(sources, merged);
       await refresh();
+      if(media.length){job.end();window.MetricsVideo.importFiles(media);}
     }catch(e){if(ticket===generation)$('errors').textContent=e.message;}
     finally{job.end();}
   }
@@ -252,7 +256,10 @@
   function renderNow(){
     chart.reset();
     redrawSeriesDisplay = null;
-    window.MetricsVideo?.setContext(dataset?allEpochs():[],$('epoch').value,mode);
+    const epochDurations={};
+    for(const recording of dataset?.recordings??[])for(const epoch of recording.epochs)for(const metric of Object.values(epoch.metrics))
+      epochDurations[epoch.id]=Math.max(epochDurations[epoch.id]||0,metric.time.at(-1)||0);
+    window.MetricsVideo?.setContext(dataset?allEpochs():[],$('epoch').value,mode,epochDurations);
     document.dispatchEvent(new CustomEvent('metrics-invalidated', { detail: { mode, dataset, selectedIds: [...selected] } }));
     if(forcedIndividuals)$('individuals').checked=false;
     let analysisInput=null;revealIndividualTraces=null;restoreIndividualTraces=null;forcedIndividuals=false;

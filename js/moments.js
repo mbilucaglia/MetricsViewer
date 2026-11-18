@@ -1,8 +1,8 @@
 (function(root){
   'use strict';
-  function detect(time,values,{criterion='max',count=5,distance=1,before=1,after=1,step}={}){
+  function detect(time,values,{criterion='max',count=5,distance=1,before,after,step}={}){
     if(!['max','min','peaks','troughs'].includes(criterion))throw new Error('Criterio non valido.');
-    if(!Number.isInteger(count)||count<1||count>50||![distance,before,after].every(x=>Number.isFinite(x)&&x>=0))throw new Error('Usa 1–50 risultati e durate finite non negative.');
+    if(!Number.isInteger(count)||count<1||count>50||![distance,before??0,after??0].every(x=>Number.isFinite(x)&&x>=0))throw new Error('Usa 1–50 risultati e durate finite non negative.');
     const valid=i=>Number.isFinite(time[i])&&Number.isFinite(values[i]);
     const adjacent=(a,b)=>valid(a)&&valid(b)&&(!Number.isFinite(step)||Math.abs(time[b]-time[a]-step)<=Math.max(1e-8,step*1e-5));
     const low=criterion==='min'||criterion==='troughs',local=criterion==='peaks'||criterion==='troughs';
@@ -22,7 +22,13 @@
       let first=c.index,last=c.index;
       while(first>0&&adjacent(first-1,first))first--;
       while(last+1<time.length&&adjacent(last,last+1))last++;
-      selected.push({...c,peak:c.time,start:Math.max(time[first],c.time-before),end:Math.min(time[last],c.time+after)});
+      const previous=c.index>0?c.time-time[c.index-1]:NaN;
+      const next=c.index+1<time.length?time[c.index+1]-c.time:NaN;
+      const width=Number.isFinite(step)&&step>0?step:Math.min(...[previous,next].filter(value=>Number.isFinite(value)&&value>0));
+      const half=Number.isFinite(width)?width/2:0;
+      selected.push({...c,peak:c.time,
+        start:before===undefined?Math.max(0,c.time-half):Math.max(time[first],c.time-before),
+        end:after===undefined?c.time+half:Math.min(time[last],c.time+after)});
       if(selected.length===(local?count:1))break;
     }
     return selected;
@@ -52,7 +58,7 @@
       const choice=$('momentsCriterion').value;
       const criterion=count===1?(choice==='peaks'?'max':'min'):choice;
       const values=alignment.summary.map(s=>s.mean);
-      const ranges=detect(alignment.time,values,{criterion,count,distance:1,before:1,after:1,step:alignment.step});
+      const ranges=detect(alignment.time,values,{criterion,count,distance:1,step:alignment.step});
       const sourceName='Media dei soggetti selezionati',criterionName=$('momentsCriterion').selectedOptions[0].textContent;
       for (const range of ranges) {
         const sample = alignment.summary[range.index];

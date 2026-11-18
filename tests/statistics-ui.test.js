@@ -24,7 +24,7 @@ function setup(flagged = [], records = ['a','b','c','d'].map(id=>({id,subject:id
   const nodes=new Map(),get=id=>{if(!nodes.has(id)){const e=new Element();e.parentElement=new Element();nodes.set(id,e);}return nodes.get(id);};
   const handlers={},plots=[],blobs=[],media=[];
   const document={getElementById:get,createElement:t=>new Element(t),addEventListener:(name,fn)=>handlers[name]=fn};
-  for(const[id,value]of Object.entries({design:'one',nullValue:'0',permutations:'100',seed:'42',aggregation:'mean',normalization:'none',range:'intersection',interpolation:'linear',outlierSummary:'none',outlierSeries:'none'}))get(id).value=value;
+  for(const[id,value]of Object.entries({betweenFactor:'none',design:'one',nullValue:'0',permutations:'100',seed:'42',aggregation:'mean',normalization:'none',range:'intersection',interpolation:'linear',outlierSummary:'none',outlierSeries:'none'}))get(id).value=value;
   const analysis = { ...require('../js/analysis') };
   if (flagged.length) analysis.summaryFlags = () => new Map(flagged.map(id => [id, { status: 'flagged' }]));
   let session = null;
@@ -89,7 +89,7 @@ test('UI reports complete-case exclusions and clears stale results on invalidati
   const ui=setup();ui.ready(['A','B','C'],'summary',ui.allRows.filter(r=>!(r.subject==='d'&&r.epoch==='C')));
   await ui.get('runStats').onclick();assert.equal(ui.get('statsStatus').textContent,'');assert.equal(ui.media.at(-1).results[0].n,3);assert.equal(ui.media.at(-1).meta.excluded_subjects,'d');
   ui.handlers['metrics-invalidated']({detail:{mode:'summary'}});assert.equal(ui.get('exportStats').disabled,true);assert.equal(ui.get('statsResults').textContent,'');
-  ui.ready(['A']);await ui.get('runStats').onclick();assert.match(ui.get('statsStatus').textContent,/due epoche/);
+  ui.ready(['A']);await ui.get('runStats').onclick();assert.equal(ui.get('statsStatus').textContent,'');assert.equal(ui.calls.at(-1).mode,'one');
 });
 
 test('significant filter omits nonsignificant rows while media receives corrected full time grid',async()=>{
@@ -137,7 +137,7 @@ test('outliers are flagged separately from sample exclusions', () => {
 
 test('group choices made in sample rows feed the analysis and survive exclusions', async () => {
   const ui = setup();
-  ui.ready(['A', 'B']);
+  ui.ready(['A']);
   const rows = () => ui.get('statsSampleList').children;
 
   ui.get('design').value = 'multi';
@@ -365,4 +365,19 @@ test('Non outlier overrides a detected outlier and automatic reset restores the 
   open();ui.get('resetPointOutlier').click();
   assert.equal(ctx.exportRows[0].outlier_status,'flagged');
   assert.equal(ctx.exportRows[0].outlier_source,'automatic');
+});
+
+test('a single within/between model derives the engine design from measures and grouping',()=>{
+ const ui=setup();ui.ready(['A','B']);
+ assert.equal(ui.get('design').value,'within');
+ ui.get('betweenFactor').value='assigned';ui.get('betweenFactor').onchange();
+ assert.equal(ui.get('design').value,'mixed');assert.equal(ui.get('groupEditor').hidden,false);
+ ui.ready(['A']);assert.equal(ui.get('design').value,'multi');
+ ui.get('betweenFactor').value='none';ui.get('betweenFactor').onchange();
+ assert.equal(ui.get('design').value,'one');
+ ui.ready(['A','B']);assert.equal(ui.get('design').value,'within');
+ ui.get('betweenFactor').value='stimulus';ui.get('betweenFactor').onchange();
+ assert.equal(ui.get('design').value,'between');
+ ui.ready(['A'],'series');assert.equal(ui.get('betweenFactor').value,'none');assert.equal(ui.get('design').value,'one');
+ ui.ready(['A','B']);assert.equal(ui.get('betweenFactor').value,'stimulus');assert.equal(ui.get('design').value,'between');
 });

@@ -71,9 +71,9 @@
         if(!preview.url){result.push({...preview,frame:null});continue;}
         let video=videos.get(preview.url);
         if(!video){
-          video=document.createElement('video');video.muted=true;video.playsInline=true;video.preload='auto';video.crossOrigin='anonymous';
-          videos.set(preview.url,video);
           const source=await root.MetricsVideo?.exportSource?.(preview.epoch);
+          video=source?.kind==='image'?root.MetricsStaticMedia.create(source.duration):document.createElement('video');video.muted=true;video.playsInline=true;video.preload='auto';video.crossOrigin='anonymous';
+          videos.set(preview.url,video);
           await waitVideo(video,'loadeddata',()=>{video.src=source?.url??preview.url;video.load();});
         }
         if(!Number.isFinite(video.duration)||video.duration<=0||preview.time<0||preview.time>video.duration+1e-7)

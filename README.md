@@ -235,7 +235,7 @@ I cerchi aprono anteprime numerate sotto il grafico. Il numero 1 indica il massi
 
 I comandi **Soggetti** e **Media ± IC 95%** cambiano solo la visualizzazione e conservano le anteprime. Cambiando dati, epoca, metrica, normalizzazione o criteri, i risultati vengono invalidati.
 
-La barra sopra il grafico trova massimi o minimi della media: con numero 1 seleziona l’estremo globale, con più risultati cerca gli estremi locali. Le clip includono un secondo prima e dopo, nei limiti del segnale. Nelle analisi statistiche le fasce verdi aprono anteprime numerate sotto il grafico. Il p finale determina quali intervalli mostrare. La numerazione parte dall’intervallo con la differenza massima più grande: distanza dal valore nullo per un campione, oppure distanza fra le medie dei gruppi. **Opzioni** contiene il tipo di test, le permutazioni, il seed e l’assegnazione ai gruppi. Il riepilogo riporta le scelte attive e le assegnazioni ai gruppi vengono conservate nella sessione del browser.
+La barra sopra il grafico trova massimi o minimi della media: con numero 1 seleziona l’estremo globale, con più risultati cerca gli estremi locali. Ogni clip di un picco copre una sola cella temporale centrata sul campione, con durata pari al passo del segnale visualizzato; i cluster coprono soltanto la propria fascia temporale. Riproduzione, scorrimento ed export rispettano questi limiti e la durata del media. Nelle analisi statistiche le fasce verdi aprono anteprime numerate sotto il grafico. Il p finale determina quali intervalli mostrare. La numerazione parte dall’intervallo con la differenza massima più grande: distanza dal valore nullo per un campione, oppure distanza fra le medie dei gruppi. **Opzioni** contiene i fattori del modello, le permutazioni, il seed e l’assegnazione ai gruppi. Il riepilogo riporta le scelte attive e le assegnazioni ai gruppi vengono conservate nella sessione del browser.
 
 
 ### Disegno misto a permutazioni
@@ -275,8 +275,16 @@ L'icona **Scala automatica X**, accanto a quella Y, ripristina la distanza autom
 
 ### Confronto diretto fra stimoli di soggetti diversi
 
-Per confrontare stimoli esclusivi, selezionali nel **Riepilogo temporale** e scegli **Opzioni → Tipo di test → Stimoli di soggetti diversi · confronto indipendente**. Ogni soggetto contribuisce con il valore aggregato del solo stimolo visto. Lo stimolo determina il gruppo, con almeno due soggetti per stimolo. Un soggetto con dati in più stimoli selezionati richiede un disegno con misure ripetute.
+Per confrontare stimoli esclusivi, selezionali nel **Riepilogo temporale** e scegli **Opzioni → Fattore tra soggetti → Stimolo presentato**. Ogni soggetto contribuisce con il valore aggregato del solo stimolo visto. Lo stimolo determina il gruppo, con almeno due soggetti per stimolo. Un soggetto con dati in più stimoli selezionati richiede un disegno con misure ripetute.
 
 Due stimoli producono un confronto t indipendente a due code con p da permutazioni. Con più stimoli sono disponibili l’omnibus F e tutti i post-hoc con correzione max-|T|. Le medie e gli IC sono disegnati per stimolo. Il CSV dei dati del test conserva lo stimolo effettivo di ciascun soggetto.
 
 Nella lista Soggetti, i badge dello stimolo sono cliccabili. Il loro nome completo resta nel tooltip. Il clic su un punto o su un badge evidenzia la coppia soggetto–stimolo e porta la riga corrispondente in vista.
+
+### Stimoli video e immagini
+
+«Aggiungi file» accetta insieme JSON/XLSX, video e immagini. Nella finestra «Associa stimoli alle epoche» il nome del file propone l’associazione; le modifiche diventano effettive con OK. Puoi aggiungere altri stimoli durante la sessione. Le immagini usano un cursore temporale e restano visibili per la durata dell’epoca (ultimo istante presente nei dati), oppure per una durata esplicita in secondi. Anche le anteprime e gli export supportano le immagini; le clip statiche sono prive di audio. I media devono essere caricati nuovamente dopo un ricaricamento della pagina.
+
+Su desktop il layout usa la larghezza della finestra e adatta l’altezza iniziale allo spazio disponibile. Trascina il divisore sopra «Come vengono elaborati i dati» per allungare/accorciare insieme i pannelli; doppio clic ripristina l’altezza automatica. Con il divisore a fuoco, usa le frecce, Home o End. Su schermi piccoli i pannelli si dispongono in verticale.
+
+Le opzioni statistiche seguono un’unica struttura entro/tra soggetti: le epoche selezionate definiscono le misure, mentre il fattore tra soggetti può essere assente, assegnato nel campione o determinato dallo stimolo presentato a soggetti distinti. Il motore ricava il confronto dalla struttura. Per le serie temporali il metodo predefinito è la massa dei cluster, con Max-T disponibile come alternativa. «P-value e soglie» è l’ultima sezione espandibile e applica le modifiche soltanto con OK.
