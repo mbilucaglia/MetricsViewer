@@ -43,7 +43,7 @@
       if(restoreFocus&&item.anchor?.isConnected)item.anchor.focus({preventScroll:true});
       if(!windows.size)stop();else front([...windows.values()].at(-1));
     }
-    function open(index,anchor,row,label,rank='0%',reveal=true){
+    function open(index,anchor,row,label,color='#4935a6',reveal=true){
       if (windows.has(index)) {
         const item = windows.get(index);
         mark(item.anchor, false);
@@ -59,6 +59,7 @@
         box.classList.add('is-docked');
         box.dataset.index=index;
       }
+      box.setAttribute('style', '--preview-color: ' + color);
       const header=doc.createElement('div');header.className='moment-pip__header';
       const handle=doc.createElement('button');handle.type='button';handle.className='moment-pip__drag';handle.textContent=`⋮⋮ ${index+1}`;handle.title=label;handle.setAttribute('aria-label',`Sposta frammento ${index+1}: trascina o usa le frecce`);
       const link=doc.createElement('button');link.type='button';link.className='moment-pip__link';link.textContent='↗';link.title='Mostra/nascondi collegamento';link.setAttribute('aria-pressed','true');link.setAttribute('aria-label','Mostra il segmento di collegamento al punto');
@@ -68,7 +69,7 @@
       let line=null;
       if(dock){
         const badge=doc.createElement('span');badge.className='moment-pip__number';badge.textContent=String(index+1);
-        badge.setAttribute('style', '--preview-rank: ' + rank);
+        badge.setAttribute('style', '--preview-color: ' + color);
         header.append(badge);
         if (summary) header.append(summary);
         header.append(controls,dismiss);
@@ -86,36 +87,49 @@
       box.addEventListener('pointerdown',()=>front(item));box.addEventListener('focusin',()=>front(item));
       link.onclick=()=>{item.linked=!item.linked;link.setAttribute('aria-pressed',String(item.linked));position(item);};
       controls.onclick = () => {
-        if (item.popup?.open) return;
+        if (item.popup) return;
         const popup = doc.createElement('dialog');
         popup.className = 'settings-dialog moment-pip-popup';
         popup.setAttribute('aria-label', 'Controlli anteprima ' + (index + 1));
         const title = doc.createElement('h2');
-        title.textContent = 'Anteprima ' + (index + 1);
+        title.textContent = summary ? [...summary.children].map(line => line.textContent).join(' · ') : 'Anteprima ' + (index + 1);
         const top = doc.createElement('header');
         top.className = 'settings-dialog-header';
         const dismissPopup = doc.createElement('button');
         dismissPopup.type = 'button';
         dismissPopup.textContent = '×';
+        dismissPopup.className = 'settings-dialog-close';
+        dismissPopup.setAttribute('data-dismiss', '');
         dismissPopup.setAttribute('aria-label', 'Chiudi senza salvare');
         dismissPopup.onclick = () => popup.close('cancel');
+        if (summary) {
+          const number = doc.createElement('span');
+          number.className = 'moment-pip__number';
+          number.textContent = String(index + 1);
+          number.setAttribute('style', '--preview-color: ' + color);
+          top.append(number);
+        }
         top.append(title, dismissPopup);
         const body = doc.createElement('div');
         body.className = 'settings-dialog-body';
+        const video = row.querySelector('video');
+        const initialVolume = video?.volume;
+        video?.pause();
         const moved = [];
-        for (const element of row.querySelectorAll('.segment-controls, :scope > span, :scope > button, :scope > .panel-note')) {
+        for (const element of row.querySelectorAll(':scope > .segment-player, :scope > span, :scope > button, :scope > .panel-note')) {
+          if (summary && element.tagName === 'SPAN') continue;
           const placeholder = doc.createComment('PIP control');
           element.before(placeholder);
           moved.push({element, placeholder});
           body.append(element);
         }
-        const video = row.querySelector('video');
-        const initialVolume = video?.volume;
         const footer = doc.createElement('footer');
         footer.className = 'settings-dialog-actions';
         const cancel = doc.createElement('button'), ok = doc.createElement('button');
         cancel.type = ok.type = 'button';
         cancel.textContent = 'Annulla'; ok.textContent = 'OK';
+        cancel.setAttribute('data-dismiss', '');
+        ok.setAttribute('data-confirm', '');
         cancel.onclick = () => popup.close('cancel');
         ok.onclick = () => popup.close('ok');
         footer.append(cancel, ok);
@@ -124,6 +138,7 @@
         item.popup = popup;
         controls.setAttribute('aria-expanded', 'true');
         popup.addEventListener('close', () => {
+          video?.pause();
           if (popup.returnValue !== 'ok' && video) {
             video.volume = initialVolume;
             const volume = popup.querySelector('.segment-volume');

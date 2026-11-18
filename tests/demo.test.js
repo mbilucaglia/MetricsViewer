@@ -31,7 +31,7 @@ test('demo button loads real records, resets filters, binds local videos and can
   env.Event = Event;
   demo(env);
   const sandbox=vm.createContext(env);
-  for (const script of ['settings-dialog', 'chart', 'app']) {
+  for (const script of ['settings-dialog', 'category-layout', 'chart', 'app']) {
     vm.runInContext(fs.readFileSync(require.resolve('../js/' + script), 'utf8'), sandbox);
   }
   assert.equal(get('workspace').hidden, true);
@@ -101,4 +101,15 @@ test('demo includes usable baseline and genuine 60 Hz grids for every subject an
       }
     }
   }
+});
+
+test('inline demo video resources contain the exact bundled MP4 bytes',()=>{
+ const env={};vm.runInNewContext(fs.readFileSync(require.resolve('../js/demo-videos'),'utf8'),env);
+ const original=JSON.parse(fs.readFileSync(require.resolve('../metrics_demo_2_stimoli.json'),'utf8'));
+ for(const {file}of Object.values(original.demo_info.videos)){
+  const encoded=env.MetricsDemoVideoData[file];
+  assert.ok(encoded.startsWith('data:video/mp4;base64,'));
+  assert.deepEqual(Buffer.from(encoded.split(',')[1],'base64'),fs.readFileSync(require.resolve('../'+file)));
+ }
+ assert.equal(Object.keys(env.MetricsDemoVideoData).length,3);
 });

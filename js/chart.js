@@ -5,6 +5,23 @@
     const svgNS='http://www.w3.org/2000/svg';
     function svgEl(tag,attrs={},text){const e=document.createElementNS(svgNS,tag);for(const[k,v]of Object.entries(attrs))e.setAttribute(k,v);if(text!==undefined)e.textContent=text;return e;}
     const zoomByPlot = new Map();
+    const categoryLayout = window.MetricsCategoryLayout.create();
+
+    function redrawCategories(control) {
+      for (const saved of [...lastPlots.values()]) {
+        if (!saved.options.categories) continue;
+        plot(saved.traces, saved.options, saved.rendered);
+        if (control) $(saved.options.target).querySelector('[data-zoom-control="' + control + '"]')?.focus({preventScroll:true});
+      }
+      onZoom();
+    }
+
+    function resetCategoryX() {
+      for (const target of ['chart', 'statsGroupPlot']) {
+        const zoom = zoomByPlot.get(getMode() + ':' + target);
+        if (zoom) zoom.x = null;
+      }
+    }
     function axisValue([min, max], fraction) {
       return min + (max - min) * fraction;
     }
@@ -197,7 +214,7 @@
       svg.append(group);
     }
 
-    function zoomTools() {
+    function zoomTools(target) {
       const element = node('div', undefined, 'chart-navigation');
       element.setAttribute('role', 'group');
       element.setAttribute('aria-label', 'Navigazione del grafico');
@@ -209,6 +226,7 @@
         upper: 'M8 14V5m-3 3 3-3 3 3M3 2h10',
         auto: 'M5 3h14M5 21h14M12 10V6m-3 3 3-3 3 3m-3 5v4m-3-3 3 3 3-3',
         lens: 'M15.5 15.5 21 21M17.5 10.5a7 7 0 1 1-14 0 7 7 0 0 1 14 0ZM7.5 10.5h6m-3-3v6',
+        export: 'M12 3v12m-4-4 4 4 4-4M4 17v4h16v-4',
         reset: 'M5 10.5a7.5 7.5 0 1 1 1.9 7.4M5 5v5.5h5.5'
       };
       const icon = (name, size = 24) => {
@@ -217,7 +235,6 @@
         return svg;
       };
       let state;
-
       const inputs = ['inferiore', 'superiore'].map((direction, index) => {
         const field = node('label');
         const input = node('input');
@@ -285,7 +302,21 @@
         element.append(control);
         return control;
       }
+      const exportButton = button('export', 'export', 'Esporta la vista', () => window.MetricsChartExport.open(exportButton, {
+        svg: () => state.svg, title: target === 'chart' ? $('chartTitle').textContent : $('statsTitle').textContent,
+        csv: () => $(target === 'chart' ? 'export' : 'exportStats').click(),
+        previews: () => (target === 'chart' ? window.MetricsMoments : window.MetricsSignificantMedia)?.getExportPreviews?.() ?? []
+      }));
+      exportButton.classList.add('chart-export-trigger');
+      exportButton.setAttribute('aria-haspopup','menu');
+      exportButton.setAttribute('aria-controls','chartExportMenu');
+      exportButton.setAttribute('aria-expanded','false');
       element.append(limits);
+      const autoX = button('auto', 'x-auto', 'Scala automatica X', () => {
+        if (state.categories) { categoryLayout.reset(); resetCategoryX(); redrawCategories('x-auto'); }
+        else state.view.resetX('x-auto');
+      });
+      autoX.querySelector('svg').classList.add('chart-auto-x-icon');
       button('auto', 'y-auto', 'Scala automatica Y', () => state.view.resetY('y-auto'));
       const lens = button('lens', 'lens', 'Zoom a selezione', () => {
         state.zoom.selecting = !state.zoom.selecting;
@@ -296,8 +327,9 @@
 
       return {
         element, sync,
-        update(visible, view, zoom, svg) {
-          state = { visible, view, zoom, svg };
+        update(visible, view, zoom, svg, categories) {
+          state = { visible, view, zoom, svg, categories };
+          autoX.title = categories ? 'Scala automatica X e distanza automatica tra le barre' : 'Scala automatica X';
           lens.setAttribute('aria-pressed', String(zoom.selecting));
           svg.classList.toggle('is-zoom-mode', zoom.selecting);
           sync(visible.y);
@@ -316,12 +348,9 @@
         if (axis === 'x') {
           const [min, max] = automatic.x;
           const width = high - low;
-          if (categories) {
-            const span = Math.max(1, Math.min(max - min, width));
-            const first = Math.max(min, Math.min(max - span, low + (width - span) / 2));
-            return [first, first + span];
-          }
-          if (low < min) return [min, min + width];
+          const span = Math.min(max - min, categories ? Math.max(1, width) : width);
+          const first = Math.max(min, Math.min(max - span, low + (width - span) / 2));
+          return [first, first + span];
         }
         return [low, high];
       }
@@ -350,11 +379,23 @@
         commit(next, control);
       }
 
+      function canPan(axis) {
+        const bounds = axis === 'y' ? zoom.yDomain ?? automatic.y : automatic.x;
+        const full = bounds[1] - bounds[0], span = visible[axis][1] - visible[axis][0];
+        return span < full - Math.max(full * 1e-9, Number.EPSILON);
+      }
+
       function translate(axis, fraction) {
         const current = visible[axis];
+        if (!canPan(axis)) return current;
         const amount = (current[1] - current[0]) * fraction;
         const next = range(axis, current[0] + amount, current[1] + amount);
         return valid(next) ? next : current;
+      }
+
+      function resetX(control) {
+        zoom.x = null;
+        redraw(control);
       }
 
       function resetY(control) {
@@ -368,7 +409,7 @@
         resetY(control);
       }
 
-      return { valid, range, commit, scale, translate, resetY, reset };
+      return { valid, range, commit, scale, translate, canPan, resetX, resetY, reset };
     }
 
     function enableSubjectSelection(element, subjectId, label, epoch) {
@@ -390,7 +431,67 @@
       });
     }
 
-    function enableNavigation(svg, bounds, zoom, visible, view, traceContent) {
+    function enableCategoryDrag(svg, categories, zoom, visible, position, X, redraw) {
+      let drag = null;
+      function cancel() {
+        if (!drag) return;
+        for (const element of drag.elements) element.removeAttribute('transform');
+        drag = null;
+        svg.classList.remove('is-category-dragging');
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', finish);
+        document.removeEventListener('pointercancel', cancelPointer);
+        document.removeEventListener('keydown', cancelKey);
+        window.removeEventListener('blur', cancel);
+      }
+      function cancelPointer(event) { if (event.pointerId === drag?.id) cancel(); }
+      function cancelKey(event) {
+        if (event.key === 'Escape' && drag) { event.preventDefault(); cancel(); }
+      }
+      function move(event) {
+        if (event.pointerId !== drag?.id) return;
+        if (!svg.isConnected) { cancel(); return; }
+        const scale = svg.getBoundingClientRect().width / svg.viewBox.baseVal.width;
+        const delta = (event.clientX - drag.startX) / scale / (X(1) - X(0));
+        const margin = Math.min(.5, (visible.x[1] - visible.x[0]) / 4);
+        drag.next = Math.max(visible.x[0] + margin, Math.min(visible.x[1] - margin, drag.position + delta));
+        if (!drag.active && Math.abs(event.clientX - drag.startX) < 5) return;
+        drag.active = true;
+        svg.classList.add('is-category-dragging');
+        const dx = X(drag.next) - X(drag.position);
+        for (const element of drag.elements) element.setAttribute('transform', 'translate(' + dx + ' 0)');
+      }
+      function finish(event) {
+        if (event.pointerId !== drag?.id) return;
+        const completed = drag;
+        cancel();
+        if (!completed.active) return;
+        const suppress = event => {
+          if (!event.target.closest?.('.metrics-chart')) return;
+          event.preventDefault();event.stopImmediatePropagation();
+        };
+        document.addEventListener('click', suppress, true);
+        setTimeout(() => document.removeEventListener('click', suppress, true), 0);
+        categoryLayout.move(categories[completed.index], completed.next - completed.index);
+        redraw();
+      }
+      svg.addEventListener('pointerdown', event => {
+        if (!event.isPrimary || event.button !== 0 || zoom.selecting || event.shiftKey || drag) return;
+        const element = event.target.closest('[data-category-index]');
+        if (!element) return;
+        const index = Number(element.dataset.categoryIndex);
+        event.preventDefault();event.stopImmediatePropagation();
+        drag = { id:event.pointerId, index, startX:event.clientX, position:position(index), next:position(index),
+          active:false, elements:[...svg.querySelectorAll('[data-category-index]')].filter(item => Number(item.dataset.categoryIndex) === index) };
+        document.addEventListener('pointermove', move);
+        document.addEventListener('pointerup', finish);
+        document.addEventListener('pointercancel', cancelPointer);
+        document.addEventListener('keydown', cancelKey);
+        window.addEventListener('blur', cancel);
+      }, true);
+    }
+
+    function enableNavigation(svg, bounds, zoom, visible, view, traceContent, categories) {
       const { left, top, width, height } = bounds;
       const selection = svgEl('rect', { class: 'chart-zoom-selection', 'aria-hidden': 'true' });
       let drag = null;
@@ -507,16 +608,21 @@
       }
 
       svg.classList.add('chart-direct-navigation');
+      svg.classList.toggle('can-pan', categories ? view.canPan('x') : axes.some(view.canPan));
       svg.addEventListener('pointerdown', event => {
         if (!event.isPrimary || event.button !== 0 || drag) return;
         suppressClick = false;
         const start = locate(event);
         const scope = scopeAt(start);
-        if (!scope || event.target.closest('.video-playhead-axis')) return;
+        if (event.target.closest('.video-playhead-axis')) return;
         event.preventDefault();
+        if (!scope) return;
+        const selecting = scope === axes && (zoom.selecting || event.shiftKey);
+        const panScope = scope.filter(axis => (!categories || axis === 'x') && view.canPan(axis));
+        if (!selecting && !panScope.length) return;
         drag = {
-          start, scope, id: event.pointerId, clientX: event.clientX, clientY: event.clientY, active: false,
-          selecting: scope === axes && (zoom.selecting || event.shiftKey)
+          start, scope: selecting ? scope : panScope,
+          id: event.pointerId, clientX: event.clientX, clientY: event.clientY, active: false, selecting
         };
         svg.classList.add('is-view-dragging');
         document.addEventListener('pointermove', move);
@@ -565,9 +671,6 @@
           event.stopImmediatePropagation();
         }
       }, true);
-      svg.addEventListener('click', event => {
-        if (scopeAt(locate(event)) === axes) svg.focus({ preventScroll: true });
-      });
     }
 
     let momentMarkers = null;
@@ -602,9 +705,9 @@
       for (const id of ['chart', 'statsGroupPlot', 'momentsDock', 'statsMomentsDock']) fitObserver.observe($(id));
     }
 
-    function previewBadge(x, y, index, total) {
-      const rank = window.MetricsSignificantMedia?.previewRank(index, total) ?? '0%';
-      const badge = svgEl('g', { class: 'preview-badge', style: '--preview-rank: ' + rank, 'aria-hidden': 'true' });
+    function previewBadge(x, y, index) {
+      const color = window.MetricsSignificantMedia?.previewColor(index) ?? '#4935a6';
+      const badge = svgEl('g', { class: 'preview-badge', style: '--preview-color: ' + color, 'aria-hidden': 'true' });
       badge.append(
         svgEl('circle', { cx: x, cy: y, r: 11 }),
         svgEl('text', { x, y: y+4, 'text-anchor': 'middle' }, String(index+1))
@@ -630,12 +733,19 @@
         if(momentMarkers&&!traces.some(t=>momentMarkers.source.subjectId?t.subjectId===momentMarkers.source.subjectId:!t.subjectId))traces=[...traces,momentMarkers.source];
       }
 
+      const size = plotSizes.get(target);
+      const w = size?.width ?? 900;
+      const compact = w < 470;
+      const pannerSpace = usesMetricScale ? (compact ? 49 : 72) : 0;
+      const rightPannerSpace = usesMetricScale ? (compact ? 22 : 28) : 0;
+      const p = { l: compact ? 47 : 65, r: (compact ? 16 : 25) + rightPannerSpace,
+        t: 25, b: (categories ? 70 : 84) + pannerSpace };
+      const categoryPosition = index => categories ? categoryLayout.position(categories[index], index) : index;
       let xmin=Infinity,xmax=-Infinity,ymin=Infinity,ymax=-Infinity;
       for(const tr of traces)for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i]))continue;const d=tr.band?.[i]||0;xmin=Math.min(xmin,tr.x[i]);xmax=Math.max(xmax,tr.x[i]);ymin=Math.min(ymin,tr.y[i]-d);ymax=Math.max(ymax,tr.y[i]+d);}
       if(!Number.isFinite(ymin)){chart.append(node('p','Nessun valore disponibile nell’intervallo selezionato.','empty-state'));return;}
       if (categories) {
-        xmin = -.5;
-        xmax = categories.length - .5;
+        [xmin, xmax] = categoryLayout.domain(categories, w - p.l - p.r);
       } else if (xmin === xmax) {
         if (!usesMetricScale) xmin -= .5;
         xmax += .5;
@@ -667,24 +777,18 @@
         }
       }
 
-      const visibleCategory = index => index >= 0 && index >= xmin && index <= xmax;
-      const size = plotSizes.get(target);
-      const w = size?.width ?? 900;
-      const compact = w < 470;
-      const pannerSpace = usesMetricScale ? (compact ? 49 : 72) : 0;
-      const rightPannerSpace = usesMetricScale ? (compact ? 22 : 28) : 0;
-      const p = { l: compact ? 47 : 65, r: (compact ? 16 : 25) + rightPannerSpace,
-        t: 25, b: (categories ? 70 : 84) + pannerSpace };
+      const visibleCategory = index => index >= 0 && categoryPosition(index) >= xmin && categoryPosition(index) <= xmax;
       const X = x => p.l + (x - xmin) / (xmax - xmin) * (w - p.l - p.r);
+      const categoryX = index => X(categoryPosition(index));
       const barTraces = traces.filter(trace => !trace.subjectId);
       const individualBars = traces.filter(trace => trace.isolationOnly);
       const slotWidth = count => Math.min(88, (w - p.l - p.r) / (xmax - xmin) * .7 / Math.max(1, count));
-      const barCenter = (at, slot, count, width) => X(at) + (slot - (count - 1) / 2) * width;
+      const barCenter = (at, slot, count, width) => categoryX(at) + (slot - (count - 1) / 2) * width;
       const annotations = [];
       if (categories && comparisons.length) {
         const count = barTraces.length;
         const width = slotWidth(count);
-        const barX = (index, group) => Number.isInteger(group) ? barCenter(index, group, count, width) : X(index);
+        const barX = (index, group) => Number.isInteger(group) ? barCenter(index, group, count, width) : categoryX(index);
         for (const comparison of comparisons) {
           const { pAdjusted, epochA, epochB, groupIndexA, groupIndexB } = comparison;
           if (!Number.isFinite(pAdjusted) || pAdjusted < 0 || pAdjusted > 1) continue;
@@ -717,6 +821,7 @@
       const Y = y => h - p.b - (y - ymin) / (ymax - ymin) * (h - p.t - p.b);
       const hasVideoCursor = !categories && getMode() === 'series';
       const svg=svgEl('svg',{viewBox:`0 0 ${w} ${h}`,role:usesMetricScale||hasVideoCursor||(target==='chart'&&(momentMarkers||traces.some(t=>t.subjectId)))||significancePoints.length||significanceRanges?.length||annotations.length?'group':'img','aria-label':title||$('chartTitle').textContent});
+      svg.dataset.exportHeight = h - pannerSpace;
       if (size?.height != null && h > size.height) svg.classList.add('chart-overflow');
       if (usesMetricScale) {
         svg.append(
@@ -755,7 +860,22 @@
       const categoryChars = Math.max(3, Math.min(22, Math.floor((w - p.l - p.r) / (Math.max(1, ticks.length) * 8))));
       for (const [x, label] of ticks) {
         const text = categories && label.length > categoryChars ? label.slice(0, categoryChars - 1) + '…' : label;
-        const tick = svgEl('text', { x: X(x), y: h - p.b + 24, 'text-anchor': 'middle', class: usesMetricScale ? 'chart-axis-hit--x' : '' }, text);
+        const tick = svgEl('text', { x: categoryX(x), y: h - p.b + 24, 'text-anchor': 'middle', class: usesMetricScale ? 'chart-axis-hit--x' : '' }, text);
+        if (categories) {
+          tick.dataset.categoryIndex = x;
+          tick.dataset.zoomControl = 'category-' + encodeURIComponent(label);
+          tick.setAttribute('tabindex', '0');
+          tick.setAttribute('role', 'button');
+          tick.setAttribute('aria-label', 'Sposta ' + label + ' orizzontalmente. Usa le frecce o trascina.');
+          tick.addEventListener('keydown', event => {
+            if (!['ArrowLeft','ArrowRight','Home'].includes(event.key)) return;
+            event.preventDefault();event.stopPropagation();
+            if (event.key === 'Home') categoryLayout.restore(label);
+            else categoryLayout.move(label, categoryPosition(x) - x +
+              (event.key === 'ArrowRight' ? 1 : -1) * (event.shiftKey ? 1 : 10) / (w - p.l - p.r) * (xmax - xmin));
+            redrawCategories(tick.dataset.zoomControl);
+          });
+        }
         tick.append(svgEl('title', {}, label));
         svg.append(tick);
       }
@@ -773,7 +893,7 @@
           const center=Math.max(p.l+12,Math.min(w-p.r-12,(left+right)/2));
           bar.append(svgEl('title',{},label),
             svgEl('rect',{x:left,y:p.t,width:Math.max(1,right-left),height:h-p.t-p.b,class:'significance-bar'}),
-            previewBadge(center,p.t+16+(index%2)*25,index,ranges.length));
+            previewBadge(center,p.t+16+(index%2)*25,index));
           statAnchors[index]=bar;
           const activate=event=>{
             event.stopPropagation();
@@ -838,8 +958,9 @@
           for(let i=0;i<tr.x.length;i++){
             if(!C.finite(tr.y[i]) || !visibleCategory(tr.x[i]) || tr.y[i] < ymin || tr.y[i] > ymax)continue;
             const point=swarmPositions.get(tr)[i],label=`${tr.name} · ${categories[i]}: ${fmt(tr.y[i])}`;
-            const circle=svgEl('circle',{cx:X(tr.x[i])+point.dx,cy:Y(tr.y[i]),r:point.r,fill:tr.color,stroke:'white','stroke-width':.6});
+            const circle=svgEl('circle',{cx:categoryX(tr.x[i])+point.dx,cy:Y(tr.y[i]),r:point.r,fill:tr.color,stroke:'white','stroke-width':.6});
             circle.append(svgEl('title',{},label));
+            circle.dataset.categoryIndex = tr.x[i];
             enableSubjectSelection(circle, tr.subjectId, label, categories[i]);
             traceLayer.append(circle);
           }
@@ -852,10 +973,12 @@
             const x=barCenter(tr.x[i],slot,peers.length,width),y=Y(tr.y[i]),half=tr.band?.[i],n=tr.n?.[i];
             const label=`${tr.name} · ${categories[i]}: ${fmt(tr.y[i])}${tr.band?(C.finite(half)?` · ${tr.bandLabel||'IC 95%'} [${fmt(tr.y[i]-half)}, ${fmt(tr.y[i]+half)}]`:` · ${tr.bandLabel||'IC 95%'} non disponibile (N < 2)`):''}${n!==undefined?` · N=${n}`:''}`;
             const bar=svgEl('rect',{x:x-width*.43,y:Math.min(Y(0),y),width:width*.86,height:Math.max(.8,Math.abs(y-Y(0))),fill:tr.color,opacity:tr.isolationOnly?.9:.78,rx:2});
+            bar.dataset.categoryIndex = tr.x[i];
             bar.append(svgEl('title',{},label));traceLayer.append(bar);
             if(C.finite(half)){
               const low=Y(tr.y[i]-half),high=Y(tr.y[i]+half),cap=Math.min(9,width*.3);
               const error=svgEl('path',{d:`M${x},${low}V${high} M${x-cap},${low}H${x+cap} M${x-cap},${high}H${x+cap}`,fill:'none',stroke:tr.color,'stroke-width':2});
+              error.dataset.categoryIndex = tr.x[i];
               error.append(svgEl('title',{},label));traceLayer.append(error);
             }
           }
@@ -873,7 +996,7 @@
           if (target === 'chart' && tr.subjectId && path.includes('L')) enableSubjectSelection(line, tr.subjectId, tr.name + ' · ' + (tr.epoch ?? ''), tr.epoch);
           traceLayer.append(line);
         }
-        if(categories||tr.x.length===1)for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i]))continue;const x=X(tr.x[i]),y=Y(tr.y[i]);if(tr.band&&C.finite(tr.band[i]))traceLayer.append(svgEl('line',{x1:x,x2:x,y1:Y(tr.y[i]-tr.band[i]),y2:Y(tr.y[i]+tr.band[i]),stroke:tr.color,'stroke-width':2}));const circle=svgEl('circle',{cx:x,cy:y,r:tr.bold?6:4,fill:tr.color,opacity:tr.bold?1:.65});circle.append(svgEl('title',{},`${tr.name}: ${fmt(tr.y[i])}`));if(tr.subjectId)enableSubjectSelection(circle,tr.subjectId,tr.name+' · '+(categories?.[tr.x[i]]??tr.epoch??''),categories?.[tr.x[i]]??tr.epoch);traceLayer.append(circle);}
+        if(categories||tr.x.length===1)for(let i=0;i<tr.x.length;i++){if(!C.finite(tr.y[i]))continue;const x=categoryX(tr.x[i]),y=Y(tr.y[i]);if(tr.band&&C.finite(tr.band[i]))traceLayer.append(svgEl('line',{x1:x,x2:x,y1:Y(tr.y[i]-tr.band[i]),y2:Y(tr.y[i]+tr.band[i]),stroke:tr.color,'stroke-width':2}));const circle=svgEl('circle',{cx:x,cy:y,r:tr.bold?6:4,fill:tr.color,opacity:tr.bold?1:.65});circle.append(svgEl('title',{},`${tr.name}: ${fmt(tr.y[i])}`));if(tr.subjectId)enableSubjectSelection(circle,tr.subjectId,tr.name+' · '+(categories?.[tr.x[i]]??tr.epoch??''),categories?.[tr.x[i]]??tr.epoch);traceLayer.append(circle);}
       }
       if(hover){svg.addEventListener('pointermove',event=>{if(svg.classList.contains('is-selecting')||svg.classList.contains('is-panning'))return;if(event.target.closest('.chart-panner')){$('tooltip').hidden=true;return;}const rect=svg.getBoundingClientRect(),x=xmin+((event.clientX-rect.left)/rect.width*w-p.l)/(w-p.l-p.r)*(xmax-xmin);$('tooltip').textContent=hover(x);$('tooltip').hidden=false;$('tooltip').style.left=Math.max(5,Math.min(event.clientX+12,window.innerWidth-320))+'px';$('tooltip').style.top=Math.max(5,Math.min(event.clientY+12,window.innerHeight-110))+'px';});svg.addEventListener('pointerleave',()=>{$('tooltip').hidden=true;});}
       const momentAnchors=[];
@@ -882,7 +1005,7 @@
         momentMarkers.points.forEach((point,index)=>{
           if (point.peak < xmin || point.peak > xmax || point.value < ymin || point.value > ymax) return;
           const circle=svgEl('g',{class:'moment-marker',tabindex:0,role:'button','aria-pressed':'false','data-preview-index':index,'aria-label':`Anteprima ${index+1} · ${point.label}.`});
-          circle.append(previewBadge(X(point.peak),Y(point.value),index,momentMarkers.points.length));
+          circle.append(previewBadge(X(point.peak),Y(point.value),index));
           circle.append(svgEl('title',{},point.label));
           const activate=event=>{event.stopPropagation();for(const other of layer.children){other.classList.toggle('is-selected',other===circle);other.setAttribute('aria-pressed',String(other===circle));}momentMarkers.onSelect(index,circle);};
           circle.addEventListener('click',activate);
@@ -897,22 +1020,23 @@
         if (!rendered) {
           const layout = node('div', undefined, 'chart-plot-layout');
           const viewport = node('div', undefined, 'chart-plot-viewport');
-          const navigation = zoomTools();
+          const navigation = zoomTools(target);
           layout.append(navigation.element, viewport);
           chart.append(layout);
           rendered = { viewport, navigation };
         }
         saved.rendered = rendered;
         const { viewport, navigation } = rendered;
-        navigation.update(visible, view, zoom, svg);
+        navigation.update(visible, view, zoom, svg, categories);
         viewport.replaceChildren(svg);
         const plotWidth = w - p.l - p.r;
         const plotHeight = h - p.t - p.b;
         const xPanner = { x: p.l, y: h - pannerSpace + 1, width: plotWidth,
           height: Math.min(pannerSpace - 8, Math.round((plotHeight + pannerSpace) * .16)) };
         enableNavigation(svg, { left: p.l, top: p.t, width: plotWidth, height: plotHeight },
-          zoom, visible, view, traceContent);
-        panner(svg, 'x', xPanner, domain.x, visible.x, traces, automatic.y, categories, view);
+          zoom, visible, view, traceContent, categories);
+        if (categories) enableCategoryDrag(svg, categories, zoom, visible, categoryPosition, X, redrawCategories);
+        panner(svg, 'x', xPanner, domain.x, visible.x, categories ? traces.map(tr => ({...tr, x:tr.x.map(categoryPosition)})) : traces, automatic.y, categories, view);
         panner(svg, 'y', { x: w - p.r + 9, y: p.t, width: rightPannerSpace - 2, height: plotHeight },
           domain.y, visible.y, traces, automatic.y, categories, view, navigation.sync);
         if (hasVideoCursor) {
@@ -954,6 +1078,6 @@
       lastPlots.clear();
     }
 
-    return { plot, markMoments, redrawSeries, clearZoom: () => zoomByPlot.clear(), reset };
+    return { plot, markMoments, redrawSeries, clearZoom: () => { zoomByPlot.clear(); categoryLayout.reset(); }, reset };
   };
 })();

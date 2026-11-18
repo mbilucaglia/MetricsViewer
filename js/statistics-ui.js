@@ -257,8 +257,8 @@
         else if (item.bottom > viewport.bottom) scroller.scrollTop += item.bottom - viewport.bottom;
       }
     }
-    ctx.setVisualIsolation(ids);
-    if (target?.type !== 'subject') selectedPair = null;
+    if (target?.type !== 'subject' || selectedPair?.id !== target.id) selectedPair = null;
+    ctx.setVisualIsolation(ids, selectedPair);
     paintSelectedPair();
     if (selectedPair) $('isolationStatus').textContent = ctx.dataset.recordings.find(record => record.id === selectedPair.id)?.subject +
       ' · ' + selectedPair.epoch;
@@ -316,16 +316,18 @@
     outlierMenu.style.top = Math.max(margin, Math.min(bounds.top, viewportHeight - height - margin)) + 'px';
   }
 
-  function closeOutlierMenu(restoreFocus = false) {
+  function closeOutlierMenu(restoreFocus = false, restoreView = true) {
     const anchor = restoreFocus ? currentOutlierAnchor() : null;
-    if (menuIsOpen()) outlierMenu.hidePopover();
+    const hadTarget = Boolean(outlierMenuTarget);
     outlierMenuTarget = null;
+    if (menuIsOpen()) outlierMenu.hidePopover();
+    if (restoreView && hadTarget) dismissIsolation();
     anchor?.focus({ preventScroll: true });
   }
 
   function openOutlierMenu(anchor, bounds) {
     if (!context || !selectedPair) return;
-    closeOutlierMenu();
+    closeOutlierMenu(false, false);
     const { id, epoch } = selectedPair;
     const record = context.dataset.recordings.find(record => record.id === id);
     if (!record) return;
@@ -374,7 +376,10 @@
     choices[next].focus({ preventScroll: true });
   });
   outlierMenu.addEventListener('toggle', event => {
-    if (event.newState === 'closed' && !menuIsOpen()) outlierMenuTarget = null;
+    if (event.newState !== 'closed' || menuIsOpen()) return;
+    const hadTarget = Boolean(outlierMenuTarget);
+    outlierMenuTarget = null;
+    if (hadTarget) dismissIsolation();
   });
   globalThis.addEventListener?.('resize', () => { if (menuIsOpen()) positionOutlierMenu(); });
   document.addEventListener('scroll', () => { if (menuIsOpen()) positionOutlierMenu(); }, true);
@@ -443,6 +448,7 @@
   function filterSubjects() {
     const query = normalizeSubject(subjectSearch.value.trim());
     const epoch = $('subjectEpochFilter').value, group = $('subjectGroupFilter').value;
+    const isolatedSubjectId = context && isolation.target?.type === 'subject' ? isolation.target.id : null;
     let found = 0;
     for (const row of $('subjects').children) {
       const { subject, recordingId } = row.dataset;
@@ -450,6 +456,7 @@
         normalizeSubject(recordingId).includes(query);
       const epochs = JSON.parse(row.dataset.epochs || '[]');
       row.hidden = !matches || (epoch && !epochs.includes(epoch)) ||
+        (isolatedSubjectId !== null && recordingId !== isolatedSubjectId) ||
         (group && groupFor(recordingId) !== group) ||
         (isolatedOutlierIds !== null && !isolatedOutlierIds.has(recordingId));
       for (const chip of row.querySelectorAll('[data-subject-epoch]')) {
@@ -601,7 +608,7 @@
 
   document.addEventListener('metrics-dataset-replaced', () => {
     manualOutliers.clear();
-    closeOutlierMenu();
+    closeOutlierMenu(false, false);
     statsExclusions.clear();
     subjectSearch.value = '';
     $('subjectEpochFilter').value = $('subjectGroupFilter').value = '';
@@ -677,7 +684,7 @@
     }
     updateIsolationControls(ctx);
   }
-  document.addEventListener('metrics-invalidated',e=>{closeOutlierMenu();currentMode=e.detail?.mode||currentMode;context=null;selectedPair=null;
+  document.addEventListener('metrics-invalidated',e=>{closeOutlierMenu(false, false);currentMode=e.detail?.mode||currentMode;context=null;selectedPair=null;
     if ('dataset' in (e.detail || {})) {
       sampleRecords = e.detail.dataset?.recordings ?? [];
       sampleSelection = new Set(e.detail.selectedIds);
@@ -731,9 +738,12 @@
     identifySubject(e.detail.id, e.detail.epoch ?? context?.epoch, e.detail.anchor);
   });
   function dismissIsolation(){if(!context||!isolation.target)return;isolation.reset();updateIsolationControls(context);}
-  document.addEventListener('click',e=>{
+  document.addEventListener('click', event => {
+    if (menuIsOpen() && !event.target?.closest?.('#pointOutlierMenu')) closeOutlierMenu();
+  }, true);
+  document.addEventListener('click', event => {
     if (isolation.target?.type !== 'subject') return;
-    if(e.target?.closest?.('.trace-isolate-button, #isolateOutliers, #restoreIsolation, .chart-panner, .chart-zoom-tools, #chart [role="button"], .subject-epoch-chip, #pointOutlierMenu, dialog, [aria-haspopup="dialog"]'))return;
+    if (event.target?.closest?.('.trace-isolate-button, #isolateOutliers, #restoreIsolation, .chart-panner, .chart-navigation, #chart [role="button"], .subject-epoch-chip, #pointOutlierMenu, dialog, [aria-haspopup="dialog"]')) return;
     dismissIsolation();
   });
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!outlierMenu.matches?.(':popover-open')&&!document.querySelector?.('dialog[open]'))dismissIsolation();});

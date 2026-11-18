@@ -3,6 +3,7 @@
   const $=id=>document.getElementById(id),video=$('stimulusVideo'),assignments=new Map(),plots=new Map();
   let epoch='',activeUrl=null,time=0,frame=null,series=true;
   let assignmentEpochs = [], pending = null, changed = false;
+  let demoVideosLoading=null;
   const videosToRemove = new Set();
   const stop=()=>{if(frame!==null)cancelAnimationFrame(frame);frame=null;};
   connectMetricsSettings({
@@ -148,9 +149,22 @@
   function replaceAssignments(items){
     stop();video.pause();video.removeAttribute('src');video.load();activeUrl=null;time=0;
     for(const id of assignments.keys())release(id);
-    for(const item of items)assignments.set(item.epoch,{url:item.url,name:item.name,objectUrl:false});
+    for(const item of items)assignments.set(item.epoch,{url:item.url,name:item.name,objectUrl:false,...(item.demoFile?{demoFile:item.demoFile}:{})});
     assignmentEpochs=items.map(item=>item.epoch);activate();rows();
     document.dispatchEvent?.(new CustomEvent('metrics-video-changed'));
+  }
+  async function exportSource(id) {
+    const item=assignments.get(id);
+    if(!item||global.location?.protocol!=='file:'||!item.demoFile)return item??null;
+    if(!global.MetricsDemoVideoData) {
+      if(!demoVideosLoading)demoVideosLoading=global.MetricsLocalLibrary.load(
+        'MetricsDemoVideoData',new URL('js/demo-videos.js',document.baseURI).href
+      ).catch(error=>{demoVideosLoading=null;throw error;});
+      await demoVideosLoading;
+    }
+    const url=global.MetricsDemoVideoData[item.demoFile];
+    if(typeof url!=='string'||!url.startsWith('data:video/'))throw new Error('Video dimostrativo per l’esportazione non disponibile.');
+    return {...item,url};
   }
   function setContext(epochs,current,mode){
     series=mode==='series';$('videoCard').hidden=!series;
@@ -252,5 +266,5 @@
   video.addEventListener('error',()=>{stop();if(activeUrl)$('videoError').textContent='Video non riproducibile. Scegli un formato supportato dal browser, ad esempio MP4 o WebM.';});
   global.addEventListener('pagehide',()=>{video.pause();stop();});
   global.addEventListener('beforeunload',()=>{stop();for(const id of assignments.keys())release(id);});
-  global.MetricsVideo={setContext,replaceAssignments,attach,seek,pause:()=>video.pause(),source:id=>assignments.get(id)||null};
+  global.MetricsVideo={setContext,replaceAssignments,attach,seek,pause:()=>video.pause(),source:id=>assignments.get(id)||null,exportSource};
 })(window);

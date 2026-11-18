@@ -32,7 +32,7 @@ function setup(){
   function choose(index,name){const input=get('videoAssignments').children[index].children[0].children[0];input.files=[{name}];input.handlers.change();}
   function assign(index,name){open();choose(index,name);confirm();}
   function chart(options){const svg=new Element();api.attach(svg,{min:5,max:15,left:50,top:20,width:100,height:100,...options});return svg;}
-  return {api,get,video,assign,choose,open,confirm,cancel,chart,revoked,frames,handlers};
+  return {api,get,video,assign,choose,open,confirm,cancel,chart,revoked,frames,handlers,window};
 }
 test('per-epoch video switching, replacement, removal and dataset cleanup',()=>{
   const t=setup();t.api.setContext(['A','B'],'A','series');t.assign(0,'a.mp4');const a=t.video.src;
@@ -115,4 +115,23 @@ test('cancel leaves the original video assigned and its URL in use',()=>{
   t.cancel();
   assert.equal(t.get('videoAssignments').children[0].children[1].textContent,'original.mp4');
   assert.equal(t.revoked.length,0);
+});
+
+test('local demo exports use inline media without changing playback or revoking file URLs',async()=>{
+ const t=setup();t.window.location={protocol:'file:'};
+ t.window.MetricsDemoVideoData={'video_demo_a.mp4':'data:video/mp4;base64,AAAA'};
+ t.api.replaceAssignments([{epoch:'A',url:'file:///video_demo_a.mp4',name:'a.mp4',demoFile:'video_demo_a.mp4'}]);
+ const exported=await t.api.exportSource('A');
+ assert.equal(exported.url,'data:video/mp4;base64,AAAA');
+ assert.equal(t.api.source('A').url,'file:///video_demo_a.mp4');
+ assert.equal(t.revoked.length,0);
+ assert.equal(await t.api.exportSource('missing'),null);
+});
+test('HTTP and uploaded media exports keep their original authorized source',async()=>{
+ const t=setup();t.window.location={protocol:'http:'};
+ t.api.replaceAssignments([{epoch:'A',url:'http://localhost/a.mp4',name:'a.mp4',demoFile:'video_demo_a.mp4'}]);
+ assert.equal(await t.api.exportSource('A'),t.api.source('A'));
+ t.window.location.protocol='file:';t.api.setContext(['A'],'A','series');t.assign(0,'uploaded.mp4');
+ assert.equal(await t.api.exportSource('A'),t.api.source('A'));
+ assert.ok((await t.api.exportSource('A')).url.startsWith('blob:'));
 });

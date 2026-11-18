@@ -30,6 +30,7 @@
   if(typeof module==='object'&&module.exports){module.exports={detect};return;}
   const $=id=>document.getElementById(id);
   const media=root.MetricsSignificantMedia.createViewer({significantMedia:'momentsMedia',significantIntervals:'momentsIntervals',mediaStatus:'momentsMediaStatus',cancelMedia:'momentsCancel'},{floatingOnly:true,dock:$('momentsDock'),anchorEvent:'metrics-markers-rendered',openAllButton:$('openAllMoments')});
+  root.MetricsMoments = {getExportPreviews:media.getExportPreviews};
   let context=null;
   function clear(){context=null;media.clear();$('extractMoments').disabled=true;$('momentsStatus').textContent='';}
   document.addEventListener('metrics-invalidated',clear);

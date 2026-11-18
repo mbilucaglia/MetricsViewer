@@ -34,7 +34,14 @@
   selectNone.type = 'button';
   selectNone.textContent = 'Deseleziona tutte';
   actions.append(selectAll, selectNone);
-  popup.append(search, list, empty, actions);
+  const footer = document.createElement('div');
+  footer.className = 'searchable-select-footer';
+  const confirm = document.createElement('button');
+  confirm.type = 'button';
+  confirm.className = 'primary searchable-select-confirm';
+  confirm.textContent = 'OK';
+  footer.append(confirm);
+  popup.append(search, list, empty, actions, footer);
   document.body.append(popup);
 
   const enhanced = new WeakMap();
@@ -98,7 +105,7 @@
     if (!current) return;
     const { select } = current;
     const previousActive = keepActive ? active : -1;
-    actions.hidden = !select.multiple;
+    actions.hidden = footer.hidden = !select.multiple;
     if (select.multiple) list.setAttribute('aria-multiselectable', 'true');
     else list.removeAttribute('aria-multiselectable');
     const query = normalize(search.value.trim());
@@ -212,6 +219,7 @@
     sync(select);
   }
 
+  confirm.onclick = () => close(true);
   selectAll.onclick = () => setAllOptions(true);
   selectNone.onclick = () => setAllOptions(false);
   search.addEventListener('input', () => renderList());
@@ -234,7 +242,7 @@
       event.stopPropagation();
       close(true);
     } else if (event.key === 'Tab' &&
-      (actions.hidden || (event.shiftKey ? event.target === search : event.target === selectNone))) {
+      (actions.hidden || (event.shiftKey ? event.target === search : event.target === confirm))) {
       close(true);
     }
   });

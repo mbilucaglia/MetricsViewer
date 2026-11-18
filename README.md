@@ -220,7 +220,7 @@ Ogni intervallo dispone di un mini player con audio originale, play/pausa, ricer
 
 ### Esempio con video già associati
 
-**Prova file di esempio** carica i dati di `metrics_demo_2_stimoli.json` (35 soggetti sintetici, 10 metriche, incluse AWI_60Hz e WL_60Hz) e collega automaticamente i video di arancia, Coca-Cola e della baseline nera di 10 secondi. Parte dalla metrica AWI e dall’epoca arancia, senza normalizzazione. Funziona anche da `file://`: `js/demo-data.js` contiene una copia del JSON, verificata dai test. Per rigenerarla dopo una modifica del JSON, aggiornare il bundle prima di pubblicare. I tre MP4 devono restare nella cartella accanto a `index.html`. Vedi [DEMO_VIDEO.md](DEMO_VIDEO.md) per provare le analisi e i mini player.
+**Prova file di esempio** carica i dati di `metrics_demo_2_stimoli.json` (35 soggetti sintetici, 10 metriche, incluse AWI_60Hz e WL_60Hz) e collega automaticamente i video di arancia, Coca-Cola e della baseline nera di 10 secondi. Parte dalla metrica AWI e dall’epoca arancia, senza normalizzazione. Funziona anche da `file://`: `js/demo-data.js` contiene una copia del JSON, verificata dai test. Per rigenerarla dopo una modifica del JSON, aggiornare il bundle prima di pubblicare. I tre MP4 devono restare nella cartella accanto a `index.html`. Per esportare i fotogrammi anche aprendo direttamente il file HTML, `js/demo-videos.js` fornisce copie inline degli stessi MP4, caricate solo al primo export locale. Dopo modifiche ai video, rigenerare questa risorsa con `npm run build:demo-videos`; i test verificano che i byte coincidano con gli MP4. Vedi [DEMO_VIDEO.md](DEMO_VIDEO.md) per provare le analisi e i mini player.
 
 
 ### Estrazione descrittiva di istanti e clip
@@ -250,14 +250,28 @@ Ogni soggetto deve avere dati in tutte le epoche ripetute. Servono almeno due so
 
 La lista **Soggetti** include chi ha valori utilizzabili per la metrica, l’intervallo e almeno uno degli stimoli visualizzati. Nel riepilogo ogni soggetto ha una riga con gli stimoli disponibili. Il giallo indica gli stimoli per cui è outlier. I filtri di stimolo e gruppo restringono la lista e si combinano con ricerca e isolamento outlier. Le checkbox dei soggetti controllano il campione. All’apertura viene selezionato un solo stimolo del riepilogo.
 
-Il clic su un punto del visualizzatore o sul badge di uno stimolo apre lo stesso menu vicino all'elemento selezionato. **Outlier** e **Non outlier** impostano un flag manuale per soggetto × stimolo × metrica, con aggiornamento dei punti, dei badge e del filtro **Solo outlier**. **Ripristina criterio automatico** rimuove la scelta manuale. I flag restano attivi durante i cambi di vista, normalizzazione e aggregazione nel dataset aperto. Svuotare il dataset o ricaricare l'esempio li azzera. I file originali e il campione statistico restano invariati. L'esclusione dai test avviene tramite i comandi del campione statistico e attualmente riguarda l'intero soggetto.
+Il clic su un punto del visualizzatore o sul badge di uno stimolo apre lo stesso menu vicino all'elemento selezionato. La lista mostra soltanto quel partecipante, con la riga evidenziata da uno sfondo tenue. La chiusura del popup (X, Escape, clic esterno o scelta di un flag) annulla l'evidenziazione e ripristina l'elenco completo senza cambiare le checkbox del campione né i flag già applicati. Anche **Ripristina vista** ripristina l'elenco completo. **Outlier** e **Non outlier** impostano un flag manuale per soggetto × stimolo × metrica, con aggiornamento dei punti, dei badge e del filtro **Solo outlier**. **Ripristina criterio automatico** rimuove la scelta manuale. I flag restano attivi durante i cambi di vista, normalizzazione e aggregazione nel dataset aperto. Svuotare il dataset o ricaricare l'esempio li azzera. I file originali e il campione statistico restano invariati. L'esclusione dai test avviene tramite i comandi del campione statistico e attualmente riguarda l'intero soggetto.
 
 Il CSV del riepilogo distingue origine manuale/automatica e stato automatico del flag. I CSV delle serie e dei risultati statistici includono anche le annotazioni manuali in `manual_outlier_flags`, con soggetto, stimolo, metrica e scelta.
 
-I menu a selezione multipla restano aperti durante la selezione e applicano insieme le scelte alla chiusura. I menu a selezione singola si chiudono e applicano la scelta al clic. Tutti i menu mostrano una spunta sulle voci selezionate. Nei PIP, tempo e stime condividono la riga del numero. **⋯** apre un popup con riproduzione ed esportazione. **Annulla** ripristina il volume precedente, mentre i comandi di riproduzione e di esportazione sono azioni immediate.
+I menu a selezione multipla restano aperti durante la selezione e applicano insieme le scelte alla chiusura. Il pulsante **OK** chiude il menu e conferma le scelte. I menu a selezione singola si chiudono e applicano la scelta al clic. Tutti i menu mostrano una spunta sulle voci selezionate. Nei PIP, tempo e stime condividono la riga del numero nel formato compatto `13 s · 3,34 (1,05; 3,45)`. Il tooltip conserva i dettagli statistici. Numeri e colori distinti collegano punti e anteprime in entrambe le viste. **⋯** apre un popup con il video, i comandi di riproduzione e l'esportazione. **Annulla** ripristina il volume precedente, mentre i comandi di riproduzione e di esportazione sono azioni immediate.
 
 webR e permuco vengono precaricati in background all’apertura della pagina. Le analisi riutilizzano la sessione pronta. Durante l’inizializzazione compaiono fase e tempo trascorso. Il calcolo emette conteggi reali delle permutazioni per ciascuna fase.
 
+
+### Esportazione della vista
+
+L'icona a sinistra dei comandi del grafico apre un menu con CSV dei dati, PNG ad alta risoluzione, SVG vettoriale e PowerPoint modificabile. Le esportazioni conservano vista corrente, testi, colori e annotazioni ed escludono panner e comandi interattivi.
+
+PNG e SVG includono i PiP aperti il cui punto numerato è visibile. I fotogrammi rappresentano l'istante indicato nella didascalia. I PiP compaiono sotto al grafico in ordine temporale, mantenendo numero e colore della graduatoria. Posizioni, righe e segmenti vengono ricalcolati sulla larghezza della vista al momento dell'export. Senza PiP aperti viene esportato il solo grafico. I segmenti compaiono soltanto nei file esportati, mai nella pagina.
+
+Nel PPTX, ogni PiP è un gruppo di immagine, numero, didascalia modificabile e riquadro. I connettori nativi sono agganciati al punto numerato e al riquadro interno del PiP. Seguono spostamento e ridimensionamento dei gruppi. Grafico vettoriale e punti sono raggruppati insieme, così anche il ridimensionamento del grafico mantiene gli agganci. Molti PiP vengono distribuiti su più slide per mantenerli leggibili.
+
+PptxGenJS 4.0.1 e JSZip 3.10.1 sono inclusi localmente con le rispettive licenze MIT in `js/vendor`. Vengono caricati solo per il PowerPoint; esportazione e preparazione dei fotogrammi avvengono nel browser.
+
+### Posizione degli stimoli nel riepilogo
+
+L'icona **Scala automatica X**, accanto a quella Y, ripristina la distanza automatica e le posizioni degli stimoli, adattate allo spazio disponibile. Trascina una barra, i suoi punti o l'etichetta per spostare orizzontalmente quello stimolo. Barra, punti, IC e parentesi dei confronti seguono la stessa posizione nel visualizzatore e nelle analisi statistiche. Le frecce sull'etichetta spostano lo stimolo; Home ne ripristina la posizione. Lo spostamento verticale avviene dal panner laterale. Il pan dell'intero grafico è attivo solo dopo lo zoom. Nelle serie temporali resta entro la durata dei dati. Il layout non modifica dati, campione o risultati dei test.
 
 ### Confronto diretto fra stimoli di soggetti diversi
 

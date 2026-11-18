@@ -24,30 +24,34 @@
     return ranges.slice().sort((a,b)=>(b.magnitude ?? -1)-(a.magnitude ?? -1)||a.start-b.start)
       .map(range=>({...range,peak:range.effectPeak ?? range.peak}));
   }
-  function previewRank(index, total) {
-    return (100 * index / Math.max(1, total - 1)).toFixed(2) + '%';
+  function previewColor(index) {
+    const palette = ['#4935a6', '#b45309', '#087f8c', '#b72b62', '#2563b8',
+      '#637b18', '#9c3dad', '#9b452b', '#306e69', '#64618d'];
+    return palette[index] ?? 'hsl(' + ((index * 137.508 + 265) % 360).toFixed(2) + ' 68% 30%)';
   }
-  if(typeof module==='object'&&module.exports){module.exports={intervals,bands,rankIntervals};return;}
-  const formatEstimate = new Intl.NumberFormat('it-IT', { maximumSignificantDigits: 4, useGrouping: false }).format;
+  if(typeof module==='object'&&module.exports){module.exports={intervals,bands,rankIntervals,previewColor};return;}
+  const formatEstimate = new Intl.NumberFormat('it-IT', { maximumSignificantDigits: 3, useGrouping: false }).format;
+  const formatPreviewTime = new Intl.NumberFormat('it-IT', { maximumFractionDigits: 2, useGrouping: false }).format;
 
   function renderPreviewSummary(target, summary) {
     const time = document.createElement('p');
     time.className = 'preview-summary__time';
-    time.textContent = formatEstimate(summary.time) + ' s';
-    if (Number.isFinite(summary.pAdjusted)) {
-      const pLabel = summary.cluster ? 'p del cluster' : summary.omnibus ? 'p globale corretto' : 'p corretto';
-      time.textContent += ' · ' + pLabel + ' ' + formatEstimate(summary.pAdjusted);
-    }
+    time.textContent = formatPreviewTime(summary.time) + ' s';
+    const pLabel = summary.cluster ? 'p del cluster' : summary.omnibus ? 'p globale corretto' : 'p corretto';
+    const pDescription = Number.isFinite(summary.pAdjusted) ? ' · ' + pLabel + ' ' + formatEstimate(summary.pAdjusted) : '';
+    const descriptions = [];
     const estimates = summary.estimates.map(({ label = 'Media', mean, halfWidth }) => {
       const line = document.createElement('p');
       const interval = Number.isFinite(halfWidth)
-        ? '[' + formatEstimate(mean - halfWidth) + '; ' + formatEstimate(mean + halfWidth) + ']'
-        : 'n.d.';
-      line.textContent = label + ' ' + formatEstimate(mean) + ' · IC 95% ' + interval;
+        ? '(' + formatEstimate(mean - halfWidth) + '; ' + formatEstimate(mean + halfWidth) + ')'
+        : '(IC n.d.)';
+      const conciseLabel = label === 'Media' ? '' : label.replace(/\s*·\s*Media$/, '') + ' ';
+      line.textContent = conciseLabel + formatEstimate(mean) + ' ' + interval;
+      descriptions.push(label + ' ' + formatEstimate(mean) + ' · IC 95% ' + interval);
       return line;
     });
     target.replaceChildren(time, ...estimates);
-    target.title = [time.textContent, ...estimates.map(line => line.textContent)].join(' · ');
+    target.title = [time.textContent + pDescription, ...descriptions].join(' · ');
   }
   function createViewer(ids={}, {floatingOnly=false,dock=null,anchorEvent=null,openAllButton=null}={}){
   const $=id=>document.getElementById(ids[id]||id);
@@ -76,8 +80,9 @@
       updateOpenAllButton();
     }});
     const alreadyOpen=floating.has(index);
-    floating.open(index,anchor,entry.row,range.label||'Frammento estratto',previewRank(index,ranges.length),reveal);
+    floating.open(index,anchor,entry.row,range.label||'Frammento estratto',previewColor(index),reveal);
     if (!alreadyOpen) {
+      entry.time = range.peak;
       const data = entry.summary && summaryAt?.(range.peak);
       if (data) renderPreviewSummary(entry.summary, data);
       for (const player of players) if (player.range === range) player.seekTo(range.peak);
@@ -161,7 +166,7 @@
         if(!available)status.textContent='Associa un video a questa epoca per estrarre frame e clip.';
         cancelButton.type='button';cancelButton.className='segment-cancel';cancelButton.textContent='Annulla estrazione';cancelButton.hidden=true;row.append(status,cancelButton);
       }
-      rows.set(index,{row,status,cancelButton,exportButtons,summary});
+      rows.set(index,{row,status,cancelButton,exportButtons,summary,time:r.peak});
       $('significantIntervals').append(row);
     }
   }
@@ -220,7 +225,9 @@
     const range=Number.isInteger(index)?ranges[index]:ranges.find(r=>time>=r.start&&time<=r.end);if(!range)return;
     const rangeIndex = Number.isInteger(index) ? index : ranges.indexOf(range);
     if(floatingOnly&&anchor)openFloating(rangeIndex,anchor);
-    const summary = rows.get(rangeIndex)?.summary;
+    const entry = rows.get(rangeIndex);
+    if (entry) entry.time = time;
+    const summary = entry?.summary;
     const data = summary && summaryAt?.(time);
     if (data) renderPreviewSummary(summary, data);
     root.MetricsVideo?.pause();
@@ -232,6 +239,17 @@
       row.classList.toggle('is-selected',selected);
       if(selected){row.scrollIntoView({block:'center',behavior:'smooth'});row.focus({preventScroll:true});}
     }
+  }
+  function getExportPreviews() {
+    if (!context || !floating) return [];
+    return ranges.flatMap((range,index) => {
+      if (!floating.has(index)) return [];
+      const entry = rows.get(index), anchor = anchors[index];
+      if (!entry || !anchor?.isConnected) return [];
+      return [{index, time:entry.time, epoch:context.epoch, color:previewColor(index), anchor,
+        caption: entry.summary ? [...entry.summary.children].map(line => line.textContent).join(' · ') : format(entry.time) + ' s',
+        url:root.MetricsVideo?.source(context.epoch)?.url ?? null}];
+    });
   }
   function waitEvent(media,name,signal,action){
     return new Promise((resolve,reject)=>{
@@ -254,7 +272,7 @@
     cancelButton.hidden=false;cancelButton.onclick=cancel;
     const buttons=[...rows.values()].flatMap(item=>item.exportButtons).map(button=>({button,disabled:button.disabled}));
     for(const {button}of buttons)button.disabled=true;
-    const media=document.createElement('video');media.muted=true;media.playsInline=true;media.preload='auto';
+    const media=document.createElement('video');media.muted=true;media.playsInline=true;media.preload='auto';media.crossOrigin='anonymous';
     let stream=null,recorder=null,animation=null,audio=null;
     try{
       if(kind==='clip'){
@@ -262,7 +280,9 @@
         audio=new Audio();await audio.resume();
       }
       status.textContent='Preparazione del video…';
-      await waitEvent(media,'loadeddata',signal,()=>{media.src=source.url;media.load();});
+      const readableSource=await root.MetricsVideo.exportSource?.(meta.epoch)??source;
+      if(signal.aborted)return;
+      await waitEvent(media,'loadeddata',signal,()=>{media.src=readableSource.url;media.load();});
       const start=kind==='frame'?range.peak:range.start,end=range.end;
       if(start<0||start>=media.duration||(kind==='clip'&&end>media.duration))throw new Error('Intervallo fuori dalla durata del video: scegli un video che copra gli istanti significativi.');
       if(Math.abs(media.currentTime-start)>1e-7)await waitEvent(media,'seeked',signal,()=>{media.currentTime=start;});
@@ -305,7 +325,7 @@
   document.addEventListener('metrics-video-changed',()=>{cancel?.();render();});
   document.addEventListener('visibilitychange',()=>{if(document.hidden){cancel?.();for(const p of players)p.media.pause();}});
   $('viewTab').addEventListener('click',()=>{closeFloating();for(const p of players)p.media.pause();});
-  return {show,showRanges,clear,intervals,bands,focusTime,openFloating,closeFloating};
+  return {show,showRanges,clear,intervals,bands,focusTime,openFloating,closeFloating,getExportPreviews};
   }
-  root.MetricsSignificantMedia={...createViewer({}, {floatingOnly:true,dock:document.getElementById('statsMomentsDock'),anchorEvent:'metrics-stat-bands-rendered',openAllButton:document.getElementById('openAllStatsMoments')}),createViewer,rankIntervals,previewRank};
+  root.MetricsSignificantMedia={...createViewer({}, {floatingOnly:true,dock:document.getElementById('statsMomentsDock'),anchorEvent:'metrics-stat-bands-rendered',openAllButton:document.getElementById('openAllStatsMoments')}),createViewer,rankIntervals,previewColor};
 })(globalThis);

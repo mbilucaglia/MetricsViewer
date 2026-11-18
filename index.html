@@ -179,7 +179,6 @@
               </div>
               <div
                   id="chart"
-                  tabindex="0"
                   class="metrics-chart"
                   aria-label="Grafico metriche"
                 >
@@ -225,14 +224,12 @@
                 </p>
                 <div
                     id="statsGroupPlot"
-                    tabindex="0"
                     aria-label="Medie e intervalli di confidenza"
                     class="metrics-chart"
                   ></div>
                 <div class="metrics-chart stats-plot-placeholder" aria-hidden="true"></div>
                 <div
                     id="statsPPlot"
-                    tabindex="0"
                     aria-label="P-value dei confronti"
                     class="metrics-chart"
                   ></div>
@@ -687,6 +684,10 @@
         <button id="busyCancel" type="button" hidden>Annulla analisi</button>
       </div>
     </dialog>
+    <script type="application/x-metrics-library" data-metrics-library="JSZip" src="js/vendor/jszip.min.js"></script>
+    <script type="application/x-metrics-library" data-metrics-library="PptxGenJS" src="js/vendor/pptxgen.min.js"></script>
+    <script type="application/x-metrics-library" data-metrics-library="MetricsDemoVideoData" src="js/demo-videos.js"></script>
+    <script src="js/local-library.js"></script>
     <script src="js/settings-dialog.js"></script>
     <script src="js/busy.js"></script>
     <script src="js/core.js"></script>
@@ -700,6 +701,10 @@
     <script src="js/video.js"></script>
     <script src="js/demo-data.js"></script>
     <script src="js/moments.js"></script>
+    <script src="js/category-layout.js"></script>
+    <script src="js/export-layout.js"></script>
+    <script src="js/pptx-export.js"></script>
+    <script src="js/chart-export.js"></script>
     <script src="js/chart.js"></script>
     <script src="js/vendor/xlsx.mini.min.js"></script>
     <script src="js/legacy-xlsx.js"></script>

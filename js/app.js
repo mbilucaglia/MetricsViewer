@@ -207,20 +207,27 @@
     });
   }
   const chart = createMetricsChart({
-    C, $, node, fmt, getMode: () => mode, onZoom: () => setVisualIsolation(visualIsolationIds)
+    C, $, node, fmt, getMode: () => mode, onZoom: () => setVisualIsolation(visualIsolationIds, visualIsolationPair)
   });
   const { plot, markMoments } = chart;
   let redrawSeriesDisplay = null;
-  let visualIsolationIds=null;
-  function setVisualIsolation(ids){
+  let visualIsolationIds=null, visualIsolationPair=null;
+  function setVisualIsolation(ids, pair = null){
     visualIsolationIds=ids;
+    visualIsolationPair=ids?.length ? pair : null;
     if(ids?.length && mode==='series' && !$('individuals').checked){forcedIndividuals=true;$('individuals').checked=true;revealIndividualTraces?.();}
     if(!ids?.length && forcedIndividuals){forcedIndividuals=false;$('individuals').checked=false;restoreIndividualTraces?.();}
     const isolated=ids?.length?new Set(ids):null;
     for(const trace of $('chart').querySelectorAll('[data-trace-subject]')){
+      const pairOnly = mode === 'summary' && visualIsolationPair;
       const emphasized=isolated?.has(trace.dataset.traceSubject)||false;
-      trace.classList.toggle('is-dimmed',Boolean(isolated&&!emphasized));
-      trace.classList.toggle('is-isolated',emphasized);
+      trace.classList.toggle('is-dimmed',Boolean(isolated && (pairOnly ? !trace.dataset.traceSubject : !emphasized)));
+      trace.classList.toggle('is-isolated',emphasized && !pairOnly);
+      trace.classList.toggle('has-selected-pair', Boolean(pairOnly && emphasized));
+      for (const point of trace.querySelectorAll('[data-subject-id]')) {
+        const selected = pairOnly && point.dataset.subjectId === visualIsolationPair.id && point.dataset.subjectEpoch === visualIsolationPair.epoch;
+        point.classList.toggle('is-dimmed', Boolean(pairOnly && !selected));
+      }
     }
   }
   function setAnalysisError(message) {
@@ -309,7 +316,7 @@
         plot(visibleTraces(), { hover });
         redrawSeriesDisplay = () => {
           chart.redrawSeries(visibleTraces());
-          setVisualIsolation(visualIsolationIds);
+          setVisualIsolation(visualIsolationIds, visualIsolationPair);
         };
         restoreIndividualTraces = revealIndividualTraces = () => chart.redrawSeries(visibleTraces());
         exportRows=aligned.summary.map((s,i)=>({...provenance,epoch,time:s.time,mean:s.mean,sd:s.sd,ci95_lower:intervals[i] === null ? null : s.mean - intervals[i],ci95_upper:intervals[i] === null ? null : s.mean + intervals[i],n:s.n,grid_step:aligned.step,range:alignmentOptions.range,interpolation:alignmentOptions.method,max_gap:o.maxGap??'auto:3*native_median_step',downsample_filter:'boxcar',...Object.fromEntries(items.map((x,j)=>[`subject:${x.r.subject}`,aligned.values[j][i]]))}));
@@ -330,7 +337,7 @@
   function demo(){
     try{
       const next=C.validate(globalThis.MetricsDemo.createDataset());
-      const videos=Object.entries(next.demo_info.videos).map(([epoch,item])=>({epoch,name:item.file,url:new URL(item.file,document.baseURI).href}));
+      const videos=Object.entries(next.demo_info.videos).map(([epoch,item])=>({epoch,name:item.file,url:new URL(item.file,document.baseURI).href,demoFile:item.file}));
       document.dispatchEvent(new Event('metrics-dataset-replaced'));
       chart.clearZoom();
       generation++;$('errors').textContent='';importedFiles=[{name:'Esempio integrato · metrics_demo_2_stimoli.json',data:next}];dataset=next;selected=new Set(next.recordings.map(r=>r.id));mode='series';
