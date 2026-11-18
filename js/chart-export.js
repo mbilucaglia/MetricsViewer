@@ -145,11 +145,11 @@
     const svg=composeSvg(chart.element,model,options.title);
     download(type==='svg'?blobFromSvg(svg):await pngFromSvg(svg,model.width,model.height),filename(options.title,type));
   }
-  for(const [type,label]of [['csv','CSV · vista'],['png','PNG · grafico e PiP'],['svg','SVG · grafico e PiP'],['pptx','PowerPoint · modificabile']]){
+  for(const [type,label]of [['csv','CSV · vista'],['csv-summary','CSV · solo media e IC 95%'],['png','PNG · grafico e PiP'],['svg','SVG · grafico e PiP'],['pptx','PowerPoint · modificabile']]){
     const item=document.createElement('button');item.type='button';item.textContent=label;item.dataset.format=type;item.setAttribute('role','menuitem');
     item.onclick=()=>{
       const options=current;if(!options)return;close();
-      const operation=type==='csv'?Promise.resolve(options.csv()):root.MetricsBusy.run('Esportazione della vista…',job=>save(type,options,job));
+      const operation=type==='csv'?Promise.resolve(options.csv()):type==='csv-summary'?Promise.resolve(options.csvSummary()):root.MetricsBusy.run('Esportazione della vista…',job=>save(type,options,job));
       operation.catch(error=>{
         const host=options.anchor.closest('.chart-navigation');let message=host.querySelector('.chart-export-error');
         if(!message){message=document.createElement('p');message.className='chart-export-error';message.setAttribute('role','alert');host.append(message);}
@@ -160,13 +160,13 @@
   menu.addEventListener('keydown',event=>{
     if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
     event.preventDefault();
-    const items=[...menu.querySelectorAll('button')],index=items.indexOf(document.activeElement);
+    const items=[...menu.querySelectorAll('button')].filter(button=>!button.hidden),index=items.indexOf(document.activeElement);
     const next=event.key==='Home'?0:event.key==='End'?items.length-1:(index+(event.key==='ArrowDown'?1:items.length-1))%items.length;
     items[next].focus();
   });
   root.MetricsChartExport={open(anchor,options){
     if(current?.anchor===anchor&&menu.matches(':popover-open')){close();return;}
-    close();current={...options,anchor};menu.querySelector('[data-format="csv"]').textContent=options.csvLabel||'CSV';anchor.setAttribute('aria-expanded','true');
+    close();current={...options,anchor};menu.querySelector('[data-format="csv"]').textContent=options.csvLabel||'CSV';menu.querySelector('[data-format="csv-summary"]').hidden=typeof options.csvSummary!=='function';anchor.setAttribute('aria-expanded','true');
     anchor.closest('.chart-navigation').querySelector('.chart-export-error')?.remove();
     menu.showPopover();
     const bounds=anchor.getBoundingClientRect();

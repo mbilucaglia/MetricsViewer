@@ -217,7 +217,7 @@
     });
   }
   const chart = createMetricsChart({
-    C, $, node, fmt, getMode: () => mode, onZoom: () => setVisualIsolation(visualIsolationIds, visualIsolationPair)
+    C, $, node, fmt, getMode: () => mode, onSummaryCsv: exportSummaryCsv, onZoom: () => setVisualIsolation(visualIsolationIds, visualIsolationPair)
   });
   const { plot, markMoments } = chart;
   let redrawSeriesDisplay = null;
@@ -494,13 +494,20 @@
     const membership=Object.keys(exportRows[0]??{}).filter(key=>key.startsWith('subject:')).map(key=>key.slice(8)+': '+groupForSubject(key.slice(8))).join('; ');
     const rows=exportRows.map(row=>({...row,...summaries.get(mode==='series'?row.time:row.epoch),
       ...(row.subject?{group:groupForSubject(row.subject)}:{}),...(mode==='series'&&membership?{group_assignments:membership}:{})}));
+    return downloadCsv(rows,'metrics-'+mode+'.csv','Preparazione CSV completo…');
+  };
+  function exportSummaryCsv(){
+    return downloadCsv(viewExportRows,'metrics-'+mode+'-media-ic95.csv','Preparazione CSV media e IC 95%…');
+  }
+  function downloadCsv(rows,filename,message){
     if(!rows.length)return;
-    return MetricsBusy.run('Preparazione CSV completo…',async()=>{
+    return MetricsBusy.run(message,async()=>{
       const headers=[...new Set(rows.flatMap(Object.keys))],csv='\uFEFF'+[headers,...rows.map(row=>headers.map(key=>row[key]))].map(row=>row.map(csvCell).join(',')).join('\r\n');
       const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),link=node('a');
-      link.href=url;link.download='metrics-'+mode+'.csv';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      link.href=url;link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
     }).catch(error=>{$('errors').textContent=error.message;});
-  };
+  }
+
   $('files').onchange=e=>{load(e.target.files);e.target.value='';};$('demo').onclick=demo;$('clear').onclick=()=>{document.dispatchEvent(new Event('metrics-dataset-replaced'));chart.clearZoom();generation++;dataset=null;importedFiles=[];selected.clear();$('errors').textContent='';refresh();$('files').focus();};
   for(const event of ['dragover','dragenter'])$('drop').addEventListener(event,e=>{e.preventDefault();$('drop').classList.add('is-dragging');});$('drop').ondragleave=()=>$('drop').classList.remove('is-dragging');$('drop').ondrop=e=>{e.preventDefault();$('drop').classList.remove('is-dragging');load(e.dataTransfer.files);};
   $('all').onclick=()=>{selected=new Set((dataset?.recordings||[]).map(r=>r.id));refresh();};$('none').onclick=()=>{selected.clear();refresh();};$('seriesTab').onclick=()=>{mode='series';render();};$('summaryTab').onclick=()=>{mode='summary';render();};

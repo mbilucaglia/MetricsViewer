@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  window.createMetricsChart = function ({ C, $, node, fmt, getMode, onZoom }) {
+  window.createMetricsChart = function ({ C, $, node, fmt, getMode, onZoom, onSummaryCsv }) {
     const svgNS='http://www.w3.org/2000/svg';
     function svgEl(tag,attrs={},text){const e=document.createElementNS(svgNS,tag);for(const[k,v]of Object.entries(attrs))e.setAttribute(k,v);if(text!==undefined)e.textContent=text;return e;}
     const zoomByPlot = new Map();
@@ -304,6 +304,7 @@
       }
       const exportButton = button('export', 'export', 'Esporta la vista', () => window.MetricsChartExport.open(exportButton, {
         csvLabel:target==='chart'?'CSV · completo':'CSV · analisi',
+        csvSummary:target==='chart'?onSummaryCsv:undefined,
         svg: () => state.svg, title: target === 'chart' ? $('chartTitle').textContent : $('statsTitle').textContent,
         csv: () => $(target === 'chart' ? 'export' : 'exportStats').click(),
         previews: () => (target === 'chart' ? window.MetricsMoments : window.MetricsSignificantMedia)?.getExportPreviews?.() ?? []
