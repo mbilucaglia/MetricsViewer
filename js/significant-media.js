@@ -145,7 +145,7 @@
     $('mediaStatus').textContent = !ranges.length ? emptyMessage
       : !available ? 'Associa un video o un’immagine a questa epoca per estrarre frame e clip.' : '';
     for(const [index,r] of ranges.entries()){
-      const row=document.createElement('div');row.className='significant-interval';row.tabIndex=-1;row.dataset.index=index;row.dataset.start=r.start;row.dataset.end=r.end;
+      const row=document.createElement('div');row.className='significant-interval';row.tabIndex=-1;row.dataset.index=index;row.dataset.start=r.start;row.dataset.end=r.end;if(r.groupName)row.dataset.previewGroup=r.groupName;if(r.rank)row.dataset.previewRank=r.rank;if(r.shape)row.dataset.previewShape=r.shape;if(r.groupColor)row.dataset.previewGroupColor=r.groupColor;if(Number.isFinite(r.groupSize))row.dataset.previewGroupSize=r.groupSize;
       const data = r.summary ?? summaryAt?.(r.peak);
       let summary = null;
       if (data) {
@@ -256,8 +256,8 @@
       if (!floating.has(index)) return [];
       const entry = rows.get(index), anchor = anchors[index];
       if (!entry || !anchor?.isConnected) return [];
-      return [{index, time:entry.time, epoch:context.epoch, color:previewColor(index), anchor,
-        caption: entry.summary ? [...entry.summary.children].map(line => line.textContent).join(' · ') : format(entry.time) + ' s',
+      return [{index, rank:range.rank??index+1,shape:range.shape??'circle', time:entry.time, epoch:context.epoch, color:previewColor(index), anchor,
+        caption: (range.groupName?range.groupName+' · ':'')+(entry.summary ? [...entry.summary.children].map(line => line.textContent).join(' · ') : format(entry.time) + ' s'),
         url:root.MetricsVideo?.source(context.epoch)?.url ?? null}];
     });
   }

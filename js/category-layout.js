@@ -14,6 +14,7 @@
         return [Math.min(center - span / 2, ...positions.map(x => x - .5)),
           Math.max(center + span / 2, ...positions.map(x => x + .5))];
       },
+      entries() { return [...offsets]; },
       reset() { offsets.clear(); }
     };
   }

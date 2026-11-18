@@ -40,6 +40,7 @@
       item.popup?.remove();
       if (item.summary) item.row.prepend(item.summary);
       windows.delete(index);item.observer?.disconnect();mark(item.anchor,false);item.line?.remove();onClose(index,item.row);item.box.remove();
+      if(item.groupRow&&!item.groupRow.querySelector('.moment-pip'))item.groupRow.remove();
       if(restoreFocus&&item.anchor?.isConnected)item.anchor.focus({preventScroll:true});
       if(!windows.size)stop();else front([...windows.values()].at(-1));
     }
@@ -68,14 +69,30 @@
       const summary = row.querySelector?.('.preview-summary');
       let line=null;
       if(dock){
-        const badge=doc.createElement('span');badge.className='moment-pip__number';badge.textContent=String(index+1);
+        const badge=doc.createElement('span');badge.className='moment-pip__number';badge.textContent=String(row.dataset.previewRank||index+1);badge.dataset.shape=row.dataset.previewShape||'circle';
         badge.setAttribute('style', '--preview-color: ' + color);
         header.append(badge);
         if (summary) header.append(summary);
         header.append(controls,dismiss);
         box.append(header,row);
-        const next=Array.from(dock.children).find(child=>Number(child.dataset.index)>index);
-        dock.insertBefore(box,next||null);
+        let container=dock;
+        if(row.dataset.previewGroup){
+          let groupRow=Array.from(dock.children).find(child=>child.dataset.previewGroup===row.dataset.previewGroup);
+          if(!groupRow){
+            groupRow=doc.createElement('section');groupRow.className='moment-pip-group';groupRow.dataset.previewGroup=row.dataset.previewGroup;groupRow.dataset.firstIndex=index;
+            groupRow.style.setProperty('--group-color',row.dataset.previewGroupColor||color);
+            const heading=doc.createElement('header');heading.className='moment-pip-group__heading';
+            const symbol=doc.createElement('span');symbol.className='moment-pip-group__symbol';
+            symbol.dataset.shape=row.dataset.previewShape||'circle';symbol.setAttribute('aria-hidden','true');
+            const title=doc.createElement('h3');title.textContent=row.dataset.previewGroup;
+            heading.append(symbol,title);
+            if(row.dataset.previewGroupSize!==undefined){const count=doc.createElement('span');count.className='moment-pip-group__count';count.textContent='n = '+row.dataset.previewGroupSize;heading.append(count);}
+            const items=doc.createElement('div');items.className='moment-pip-group__items';groupRow.append(heading,items);const nextGroup=Array.from(dock.children).find(child=>Number(child.dataset.firstIndex)>index);dock.insertBefore(groupRow,nextGroup||null);
+          }
+          container=groupRow.querySelector('.moment-pip-group__items');
+        }
+        const next=Array.from(container.children).find(child=>Number(child.dataset.index)>index);
+        container.insertBefore(box,next||null);
       }else{
         header.append(handle);
         if (summary) header.append(summary);
@@ -83,7 +100,7 @@
         line=doc.createElementNS(ns,'line');overlay.append(line);
       }
       const a=dock ? {right:0,top:0} : anchor.getBoundingClientRect(),offset=(windows.size%6)*24;
-      const item={index,box,row,anchor,line,summary,handle:dock?dismiss:handle,controls,compact:true,linked:true,x:a.right+12+offset,y:a.top-box.offsetHeight/2+offset};windows.set(index,item);mark(anchor,true);
+      const item={index,box,row,anchor,line,summary,handle:dock?dismiss:handle,controls,compact:true,linked:true,x:a.right+12+offset,y:a.top-box.offsetHeight/2+offset};item.groupRow=dock&&row.dataset.previewGroup?box.closest('.moment-pip-group'):null;windows.set(index,item);mark(anchor,true);
       box.addEventListener('pointerdown',()=>front(item));box.addEventListener('focusin',()=>front(item));
       link.onclick=()=>{item.linked=!item.linked;link.setAttribute('aria-pressed',String(item.linked));position(item);};
       controls.onclick = () => {
@@ -92,7 +109,7 @@
         popup.className = 'settings-dialog moment-pip-popup';
         popup.setAttribute('aria-label', 'Controlli anteprima ' + (index + 1));
         const title = doc.createElement('h2');
-        title.textContent = summary ? [...summary.children].map(line => line.textContent).join(' · ') : 'Anteprima ' + (index + 1);
+        title.textContent = (row.dataset.previewGroup?row.dataset.previewGroup+' · ':'')+(summary ? [...summary.children].map(line => line.textContent).join(' · ') : 'Anteprima ' + (row.dataset.previewRank||index + 1));
         const top = doc.createElement('header');
         top.className = 'settings-dialog-header';
         const dismissPopup = doc.createElement('button');
@@ -105,7 +122,8 @@
         if (summary) {
           const number = doc.createElement('span');
           number.className = 'moment-pip__number';
-          number.textContent = String(index + 1);
+          number.textContent = String(row.dataset.previewRank || index + 1);
+          number.dataset.shape=row.dataset.previewShape||'circle';
           number.setAttribute('style', '--preview-color: ' + color);
           top.append(number);
         }

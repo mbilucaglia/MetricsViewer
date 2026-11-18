@@ -49,15 +49,15 @@ function setup(flagged = [], records = ['a','b','c','d'].map(id=>({id,subject:id
     })) : [];
     return { points, posthoc, groups: summaries, resamples: permutations + 1, software };
   });
-  const env={AbortController,sessionStorage:{getItem:()=>session,setItem:(_,value)=>{session=value;}},MetricsSignificantMedia:{show:(results,meta)=>media.push({results,meta}),clear:()=>media.push(null)},document,MetricsCore:require('../js/core'),MetricsAnalysis:analysis,MetricsIsolation:require('../js/isolation'),MetricsWebR:{run:options=>{calls.push(options);return run(options);}},MetricsBusy:{start:()=>({step:async()=>{},update(){},end(){}}),run:async(_,fn)=>fn()},Blob,URL:{createObjectURL:b=>{blobs.push(b);return 'test';},revokeObjectURL(){}},setTimeout:()=>{}};
+  const env={AbortController,sessionStorage:{getItem:()=>session,setItem:(_,value)=>{session=value;}},MetricsSignificantMedia:{rankIntervals:items=>items,showRanges:(ranges,meta)=>media.push({ranges,meta}),show:(results,meta)=>media.push({results,meta}),clear:()=>media.push(null)},document,MetricsCore:require('../js/core'),MetricsAnalysis:analysis,MetricsIsolation:require('../js/isolation'),MetricsWebR:{run:options=>{calls.push(options);return run(options);}},MetricsBusy:{start:()=>({step:async()=>{},update(){},end(){}}),run:async(_,fn)=>fn()},Blob,URL:{createObjectURL:b=>{blobs.push(b);return 'test';},revokeObjectURL(){}},setTimeout:()=>{}};
   const sandbox=vm.createContext(env);
-  for (const script of ['settings-dialog','statistics-ui']) vm.runInContext(fs.readFileSync(require.resolve('../js/'+script),'utf8'),sandbox);
+  for (const script of ['project','settings-dialog','statistics-ui']) vm.runInContext(fs.readFileSync(require.resolve('../js/'+script),'utf8'),sandbox);
   const allRows=records.flatMap((r,i)=>['A','B','C'].map((epoch,j)=>({subject:r.subject,epoch,value:[i+1,2*i+3,3*i+2][j],n_samples:3})));
-  function ready(epochs=['A','B','C'],mode='summary',rows=allRows,selection=records,prepared=()=>[]){
-    const ctx={mode,dataset:{recordings:records},records:selection,metric:'AWI',epoch:'A',o:{norm:'none',from:0,to:1},analysisInput:mode==='summary'?{epochs,rows:rows.filter(r=>epochs.includes(r.epoch))}:{items:records.map(r=>({r})),alignment:{time:[0,1],values:records.map((r,i)=>[i+1,i+2])}},exportRows:[],prepared,setVisualIsolation(){},plot:(traces,options)=>plots.push({traces,options})};
+  function ready(epochs=['A','B','C'],mode='summary',rows=allRows,selection=records,prepared=()=>[],metric='AWI'){
+    const ctx={mode,dataset:{recordings:records},records:selection,metric,epoch:epochs[0],o:{norm:'none',from:0,to:1},analysisInput:mode==='summary'?{epochs,rows:rows.filter(r=>epochs.includes(r.epoch))}:{items:records.map(r=>({r})),alignment:{time:[0,1],values:records.map((r,i)=>[i+1,i+2])}},exportRows:[],prepared,setVisualIsolation(){},plot:(traces,options)=>plots.push({traces,options})};
     handlers['metrics-invalidated']({detail:{mode}});handlers['metrics-ready']({detail:ctx});return ctx;
   }
-  return {get,ready,plots,blobs,allRows,handlers,media,calls,getSession:()=>session};
+  return {get,ready,plots,blobs,allRows,handlers,media,calls,statsProject:env.MetricsStatsProject,project:env.MetricsProject,getSession:()=>session};
 }
 test('summary UI defaults to within-subject, displays omnibus/post-hoc and exports paired metadata',async()=>{
   const ui=setup();ui.ready();assert.equal(ui.get('design').value,'within');assert.equal(ui.get('groupEditor').hidden,true);assert.equal(ui.get('nullValue').disabled,true);
@@ -380,4 +380,113 @@ test('a single within/between model derives the engine design from measures and 
  assert.equal(ui.get('design').value,'between');
  ui.ready(['A'],'series');assert.equal(ui.get('betweenFactor').value,'none');assert.equal(ui.get('design').value,'one');
  ui.ready(['A','B']);assert.equal(ui.get('betweenFactor').value,'stimulus');assert.equal(ui.get('design').value,'between');
+});
+
+for (const scenario of ['summary','series','cluster','empty cluster']) {
+  test('saved report restores tables, plots and CSVs without a test run: '+scenario, async () => {
+    const mode = scenario === 'summary' ? 'summary' : 'series';
+    const cluster = scenario.includes('cluster');
+    const engine = cluster ? async () => ({
+      points:[], groups:[[{mean:2,sd:1,margin:1},{mean:3,sd:2,margin:1}]],
+      clusters:scenario === 'empty cluster' ? [] : [{
+        startIndex:0,endIndex:1,peakIndex:1,start:0,end:1,samples:2,
+        direction:1,statistic:Infinity,peakStatistic:Infinity,pAdjusted:.01
+      }], resamples:101, software:{webR:'test',R:'R',permuco:'test'}
+    }) : undefined;
+    const first=setup([],undefined,engine), epochs=mode==='series' ? ['A'] : ['A','B','C'];
+    first.ready(epochs,mode);
+    if (cluster) first.get('temporalCorrection').value='cluster';
+    await first.get('runStats').onclick();
+    assert.equal(first.get('exportStats').disabled,false);
+    first.get('statsDetails').open=true;
+    const file=first.project.pack({stats:first.statsProject.capture()},[]);
+    const second=setup();
+    const {state:{stats}}=await second.project.unpack(file);
+    const saved=second.statsProject.readHistory(stats,mode,'AWI','A');
+    second.statsProject.restore(stats,mode);
+    second.ready(epochs,mode);
+    second.statsProject.restoreFilters(stats);
+    second.statsProject.restoreHistory(saved);
+    assert.equal(second.calls.length,0);
+    assert.equal(second.get('statsDetails').open,true);
+    assert.equal(second.get('statsResults').textContent,first.get('statsResults').textContent);
+    assert.equal(JSON.stringify(second.plots.at(-1)),JSON.stringify(first.plots.at(-1)));
+    for (const id of ['exportStats','exportStatsInput']) {
+      assert.equal(second.get(id).disabled,false);
+      await first.get(id).onclick();
+      await second.get(id).onclick();
+      assert.equal(await second.blobs.at(-1).text(),await first.blobs.at(-1).text());
+    }
+    second.ready(epochs,mode);
+    assert.equal(second.statsProject.capture().analyses.length,1);
+    assert.equal(second.get('exportStats').disabled,false);
+    assert.equal(second.statsProject.readAnalysis({},mode,'AWI','A'),null);
+  });
+}
+
+test('multiple reports survive view changes, a failed rerun and a project opened on an untested metric', async () => {
+  const first=setup();
+  function select(ui,metric,epoch) { ui.ready([epoch],'series',undefined,undefined,undefined,metric); }
+  for (const [metric,epoch] of [['AWI','A'],['AWI','B'],['TLI','A']]) {
+    select(first,metric,epoch);
+    assert.equal(first.get('exportStats').disabled,true);
+    await first.get('runStats').onclick();
+    assert.equal(first.get('exportStats').disabled,false);
+  }
+  select(first,'AWI','B');
+  assert.equal(first.media.at(-1).meta.epoch,'B');
+  assert.equal(first.calls.length,3);
+  await first.get('runStats').onclick();
+  assert.equal(first.statsProject.capture().analyses.length,3);
+  first.get('seed').value='99';
+  select(first,'AWI','B');
+  assert.equal(first.get('exportStats').disabled,true);
+  await first.get('runStats').onclick();
+  first.get('seed').value='-1';
+  await first.get('runStats').onclick();
+  assert.equal(first.statsProject.capture().analyses.length,4);
+  first.get('seed').value='42';
+  select(first,'New','C');
+  const second=setup(), file=first.project.pack(first.statsProject.capture(),[]);
+  const {state}=await second.project.unpack(file);
+  const archive=second.statsProject.readHistory(state,'series','New','C');
+  second.statsProject.restore(state,'series');
+  select(second,'New','C');
+  second.statsProject.restoreHistory(archive);
+  assert.equal(second.get('exportStats').disabled,true);
+  for (const [metric,epoch] of [['TLI','A'],['AWI','B'],['AWI','A']]) {
+    select(second,metric,epoch);
+    assert.equal(second.get('exportStats').disabled,false);
+    assert.equal(second.media.at(-1).meta.metric,metric);
+    assert.equal(second.media.at(-1).meta.epoch,epoch);
+  }
+  second.get('seed').value='99';
+  select(second,'AWI','B');
+  assert.equal(second.media.at(-1).meta.seed,99);
+  second.handlers['metrics-sources-changed']();
+  select(second,'AWI','B');
+  assert.equal(second.get('exportStats').disabled,true);
+  second.get('historyChoice').value='0';
+  second.get('historyChoice').onchange();
+  assert.match(second.get('historyResults').textContent,/AWI/);
+  await second.get('historyExport').onclick();
+  assert.match(await second.blobs[0].text(),/AWI/);
+  assert.equal(second.calls.length,0);
+  second.handlers['metrics-dataset-replaced']();
+  assert.equal(second.statsProject.capture().analyses.length,0);
+});
+
+test('single-result legacy projects migrate into the analysis archive', async () => {
+  const first=setup();
+  first.ready(); await first.get('runStats').onclick();
+  const state=first.statsProject.capture();
+  state.analysis=state.analyses[0][1];
+  delete state.analyses; delete state.sourceRevision;
+  const second=setup();
+  const archive=second.statsProject.readHistory(state,'summary','AWI','A');
+  second.statsProject.restore(state,'summary');
+  second.ready(); second.statsProject.restoreHistory(archive);
+  assert.equal(second.get('exportStats').disabled,false);
+  assert.equal(second.statsProject.capture().analyses.length,1);
+  assert.equal(second.calls.length,0);
 });

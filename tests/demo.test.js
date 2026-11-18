@@ -26,12 +26,12 @@ test('demo button loads real records, resets filters, binds local videos and can
   const nodes=new Map(),get=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);};
   for(const [id,value]of Object.entries({normalization:'none',madScale:'scaled',range:'intersection',interpolation:'linear',aggregation:'mean'}))get(id).value=value;
   let ready=null,bindings=null,viewClicks=0,invalidations=0,anchors=[];get('viewTab').onclick=()=>viewClicks++;
-  const env={MetricsCore:C,MetricsAnalysis:require('../js/analysis'),URL,document:{baseURI:'file:///C:/Metrics%20Viewer/index.html',getElementById:get,createElement:t=>new Element(t),createElementNS:(_,t)=>new Element(t),createTextNode:text=>({textContent:text}),dispatchEvent:e=>{if(e.type==='metrics-ready')ready=e.detail;if(e.type==='metrics-invalidated')invalidations++;if(e.type==='metrics-markers-rendered')anchors=e.detail.anchors;}},CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},MetricsBusy:{run:async(_,fn)=>fn({step:async()=>{}})},MetricsVideo:{replaceAssignments:items=>bindings=items,setContext(){},attach(){}}};
+  const env={MetricsCore:C,MetricsAnalysis:require('../js/analysis'),URL,document:{addEventListener(){},baseURI:'file:///C:/Metrics%20Viewer/index.html',getElementById:get,createElement:t=>new Element(t),createElementNS:(_,t)=>new Element(t),createTextNode:text=>({textContent:text}),dispatchEvent:e=>{if(e.type==='metrics-ready')ready=e.detail;if(e.type==='metrics-invalidated')invalidations++;if(e.type==='metrics-markers-rendered')anchors=e.detail.anchors;}},CustomEvent:class{constructor(type,options){this.type=type;this.detail=options.detail;}},MetricsBusy:{run:async(_,fn)=>fn({step:async()=>{}})},MetricsVideo:{replaceAssignments:items=>bindings=items,setContext(){},attach(){}}};
   env.window=env;
   env.Event = Event;
   demo(env);
   const sandbox=vm.createContext(env);
-  for (const script of ['settings-dialog', 'category-layout', 'chart', 'app']) {
+  for (const script of ['settings-dialog', 'category-layout', 'chart', 'view-summary', 'app']) {
     vm.runInContext(fs.readFileSync(require.resolve('../js/' + script), 'utf8'), sandbox);
   }
   assert.equal(get('workspace').hidden, true);

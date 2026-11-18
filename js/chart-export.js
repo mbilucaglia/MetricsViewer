@@ -87,8 +87,9 @@
       return result;
     } finally {for(const video of videos.values()){video.pause();video.removeAttribute('src');video.load();}}
   }
-  function badge(parent,x,y,rank,color,radius=11) {
-    parent.append(svgElement('circle',{cx:x,cy:y,r:radius,fill:color}),
+  function badge(parent,x,y,rank,color,radius=11,shape='circle') {
+    const geometry=root.MetricsViewSummary?.symbol(shape,x,y,radius)??{tag:'circle',attrs:{cx:x,cy:y,r:radius}};
+    parent.append(svgElement(geometry.tag,{...geometry.attrs,fill:color}),
       svgElement('text',{x,y:y+4,'text-anchor':'middle',fill:'#fff','font-size':12,'font-family':'Arial, sans-serif','font-weight':700},rank));
   }
   function composeSvg(chart,model,title) {
@@ -102,7 +103,7 @@
     for(const card of model.cards){
       const group=svgElement('g',{'data-export-pip':card.index});
       group.append(svgElement('rect',{x:card.x,y:card.y,width:card.width,height:card.height,rx:6,fill:'#fafafe',stroke:'#dfe1ef','stroke-width':1}));
-      badge(group,card.x+20,card.y+Math.min(card.captionHeight/2,24),card.index+1,card.color);
+      badge(group,card.x+20,card.y+Math.min(card.captionHeight/2,24),card.rank??card.index+1,card.color,11,card.shape);
       card.lines.forEach((line,index)=>group.append(svgElement('text',{x:card.x+38,y:card.y+20+index*17,fill:'#25234a','font-family':'Arial, sans-serif','font-size':13},line)));
       if(card.frame)group.append(svgElement('image',{href:card.frame,x:card.image.x,y:card.image.y,width:card.image.width,height:card.image.height,preserveAspectRatio:'xMidYMid meet'}));
       else group.append(svgElement('text',{x:card.x+card.width/2,y:card.image.y+card.image.height/2,'text-anchor':'middle',fill:'#686887','font-family':'Arial, sans-serif','font-size':13},'Video non associato'));
@@ -144,7 +145,7 @@
     const svg=composeSvg(chart.element,model,options.title);
     download(type==='svg'?blobFromSvg(svg):await pngFromSvg(svg,model.width,model.height),filename(options.title,type));
   }
-  for(const [type,label]of [['csv','CSV · dati'],['png','PNG · grafico e PiP'],['svg','SVG · grafico e PiP'],['pptx','PowerPoint · modificabile']]){
+  for(const [type,label]of [['csv','CSV · vista'],['png','PNG · grafico e PiP'],['svg','SVG · grafico e PiP'],['pptx','PowerPoint · modificabile']]){
     const item=document.createElement('button');item.type='button';item.textContent=label;item.dataset.format=type;item.setAttribute('role','menuitem');
     item.onclick=()=>{
       const options=current;if(!options)return;close();
@@ -165,7 +166,7 @@
   });
   root.MetricsChartExport={open(anchor,options){
     if(current?.anchor===anchor&&menu.matches(':popover-open')){close();return;}
-    close();current={...options,anchor};anchor.setAttribute('aria-expanded','true');
+    close();current={...options,anchor};menu.querySelector('[data-format="csv"]').textContent=options.csvLabel||'CSV';anchor.setAttribute('aria-expanded','true');
     anchor.closest('.chart-navigation').querySelector('.chart-export-error')?.remove();
     menu.showPopover();
     const bounds=anchor.getBoundingClientRect();

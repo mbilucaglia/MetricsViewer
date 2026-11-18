@@ -303,6 +303,7 @@
         return control;
       }
       const exportButton = button('export', 'export', 'Esporta la vista', () => window.MetricsChartExport.open(exportButton, {
+        csvLabel:target==='chart'?'CSV · completo':'CSV · analisi',
         svg: () => state.svg, title: target === 'chart' ? $('chartTitle').textContent : $('statsTitle').textContent,
         csv: () => $(target === 'chart' ? 'export' : 'exportStats').click(),
         previews: () => (target === 'chart' ? window.MetricsMoments : window.MetricsSignificantMedia)?.getExportPreviews?.() ?? []
@@ -705,13 +706,13 @@
       for (const id of ['chart', 'statsGroupPlot', 'momentsDock', 'statsMomentsDock']) fitObserver.observe($(id));
     }
 
-    function previewBadge(x, y, index) {
+    function previewBadge(x, y, index, rank=index+1, shape='circle') {
       const color = window.MetricsSignificantMedia?.previewColor(index) ?? '#4935a6';
       const badge = svgEl('g', { class: 'preview-badge', style: '--preview-color: ' + color, 'aria-hidden': 'true' });
-      badge.append(
-        svgEl('circle', { cx: x, cy: y, r: 11 }),
-        svgEl('text', { x, y: y+4, 'text-anchor': 'middle' }, String(index+1))
-      );
+      if(shape!=='circle')badge.append(svgEl('circle',{cx:x,cy:y,r:11,visibility:'hidden','aria-hidden':'true'}));
+      const geometry=window.MetricsViewSummary?.symbol(shape,x,y,11)??{tag:'circle',attrs:{cx:x,cy:y,r:11}};
+      badge.append(svgEl(geometry.tag,{...geometry.attrs,fill:color,stroke:'#fff','stroke-width':2}),
+        svgEl('text',{x,y:y+4,'text-anchor':'middle'},String(rank)));
       return badge;
     }
     function markMoments(points,source,onSelect){
@@ -935,15 +936,24 @@
       if(categories){
         for(let i=0;i<categories.length;i++){
           const points=traces.filter(t=>t.swarm&&C.finite(t.y[i])).map(t=>({t,y:Y(t.y[i])})).sort((a,b)=>a.y-b.y||a.t.name.localeCompare(b.t.name));
-          const placed=[];
-          for(const point of points){
-            const candidates=[0];
-            for(const q of placed){const dy=point.y-q.y;if(Math.abs(dy)<9){const dx=Math.sqrt(81-dy*dy);candidates.push(q.dx-dx,q.dx+dx);}}
-            candidates.sort((a,b)=>Math.abs(a)-Math.abs(b)||a-b);
-            point.dx=candidates.find(dx=>placed.every(q=>(dx-q.dx)**2+(point.y-q.y)**2>=81-1e-7))??0;placed.push(point);
+          const buckets=new Map();
+          for(const point of points){const key=point.t.groupIndex??-1;if(!buckets.has(key))buckets.set(key,[]);buckets.get(key).push(point);}
+          for(const bucket of buckets.values()){
+            const placed=[];
+            for(const point of bucket){
+              const candidates=[0];
+              for(const q of placed){const dy=point.y-q.y;if(Math.abs(dy)<9){const dx=Math.sqrt(81-dy*dy);candidates.push(q.dx-dx,q.dx+dx);}}
+              candidates.sort((a,b)=>Math.abs(a)-Math.abs(b)||a-b);
+              point.dx=candidates.find(dx=>placed.every(q=>(dx-q.dx)**2+(point.y-q.y)**2>=81-1e-7))??0;placed.push(point);
+            }
+            const groupCount=bucket[0]?.t.groupCount||1;
+            const extent=Math.max(4,...placed.map(q=>Math.abs(q.dx)+4)),scale=Math.min(1,(X(1)-X(0))*.32/groupCount/extent);
+            for(const q of placed){
+              if(!swarmPositions.has(q.t))swarmPositions.set(q.t,[]);
+              const offset=Number.isInteger(q.t.groupIndex)?barCenter(i,q.t.groupIndex,groupCount,slotWidth(groupCount))-categoryX(i):0;
+              swarmPositions.get(q.t)[i]={dx:offset+q.dx*scale,r:4*scale};
+            }
           }
-          const extent=Math.max(4,...placed.map(q=>Math.abs(q.dx)+4)),scale=Math.min(1,(X(1)-X(0))*.32/extent);
-          for(const q of placed){if(!swarmPositions.has(q.t))swarmPositions.set(q.t,[]);swarmPositions.get(q.t)[i]={dx:q.dx*scale,r:4*scale};}
         }
       }
       const traceClip = svgEl('g', { 'clip-path': 'url(#' + clipId + ')' });
@@ -1005,7 +1015,7 @@
         momentMarkers.points.forEach((point,index)=>{
           if (point.peak < xmin || point.peak > xmax || point.value < ymin || point.value > ymax) return;
           const circle=svgEl('g',{class:'moment-marker',tabindex:0,role:'button','aria-pressed':'false','data-preview-index':index,'aria-label':`Anteprima ${index+1} · ${point.label}.`});
-          circle.append(previewBadge(X(point.peak),Y(point.value),index));
+          circle.append(previewBadge(X(point.peak),Y(point.value),index,point.rank??index+1,point.shape));
           circle.append(svgEl('title',{},point.label));
           const activate=event=>{event.stopPropagation();for(const other of layer.children){other.classList.toggle('is-selected',other===circle);other.setAttribute('aria-pressed',String(other===circle));}momentMarkers.onSelect(index,circle);};
           circle.addEventListener('click',activate);
@@ -1078,6 +1088,20 @@
       lastPlots.clear();
     }
 
-    return { plot, markMoments, redrawSeries, clearZoom: () => { zoomByPlot.clear(); categoryLayout.reset(); }, reset };
+    function captureView() {
+      return {zoom:[...zoomByPlot].map(([key,{x,y,yDomain}]) => [key,{x,y,yDomain}]), offsets:categoryLayout.entries()};
+    }
+    function restoreView(view) {
+      zoomByPlot.clear(); categoryLayout.reset();
+      for (const [key,{x,y,yDomain}] of view.zoom) zoomByPlot.set(key,{x,y,yDomain,selecting:false,lastFollow:-Infinity});
+      for (const [category,offset] of view.offsets) categoryLayout.move(category,offset);
+    }
+    function includesViewX(value){
+      const range=zoomByPlot.get(getMode()+':chart')?.x;
+      const categories=lastPlots.get('chart')?.options.categories;
+      const position=categories?categoryLayout.position(categories[value],value):value;
+      return !range||position>=range[0]-1e-9&&position<=range[1]+1e-9;
+    }
+    return { plot, markMoments, redrawSeries, captureView, includesViewX, restoreView, clearZoom: () => { zoomByPlot.clear(); categoryLayout.reset(); }, reset };
   };
 })();

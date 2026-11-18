@@ -57,19 +57,20 @@
       const {alignment}=context.analysisInput,source='mean',count=Number($('momentsCount').value);
       const choice=$('momentsCriterion').value;
       const criterion=count===1?(choice==='peaks'?'max':'min'):choice;
-      const values=alignment.summary.map(s=>s.mean);
-      const ranges=detect(alignment.time,values,{criterion,count,distance:1,step:alignment.step});
-      const sourceName='Media dei soggetti selezionati',criterionName=$('momentsCriterion').selectedOptions[0].textContent;
-      for (const range of ranges) {
-        const sample = alignment.summary[range.index];
-        range.summary = {
-          time: range.peak,
-          estimates: [{ mean: sample.mean, halfWidth: root.MetricsAnalysis.ci95FromSummary(sample.n, sample.sd) }]
-        };
-      }
-      for(const r of ranges)r.label=`${criterionName} · ${r.peak.toFixed(2)} s · valore ${Number(r.value.toPrecision(5))} · clip ${r.start.toFixed(2)}–${r.end.toFixed(2)} s`;
+      const sources=context.viewSummaries?.length?context.viewSummaries:[{id:'all',name:'Media',summary:alignment.summary,color:'#312b79'}];
+      const criterionName=$('momentsCriterion').selectedOptions[0].textContent;
+      const ranges=sources.flatMap((group,groupIndex)=>{
+        const values=group.summary.map(sample=>sample.mean);
+        return detect(alignment.time,values,{criterion,count,distance:1,step:alignment.step}).map((range,rank)=>{
+          const sample=group.summary[range.index],halfWidth=sample.ci===undefined?root.MetricsAnalysis.ci95FromSummary(sample.n,sample.sd):sample.ci;
+          return {...range,rank:rank+1,shape:['circle','square','triangle','diamond','hexagon'][groupIndex%5],groupName:group.id==='all'?'':group.name,groupColor:group.color,groupSize:group.members?.length??group.summary[range.index].n,
+            summary:{time:range.peak,estimates:[{mean:sample.mean,halfWidth}]},
+            label:group.name+' · '+criterionName+' · '+range.peak.toFixed(2)+' s'};
+        });
+      });
       media.showRanges(ranges,{view:'series',epoch:context.epoch,metric:context.metric,criterion});
-      context.markMoments(ranges,{name:sourceName,subjectId:source==='mean'?null:source,x:alignment.time,y:values,color:'#312b79',bold:true},(index,anchor)=>media.openFloating(index,anchor));
+      const first=sources[0];
+      context.markMoments(ranges,{name:first.name,subjectId:null,x:alignment.time,y:first.summary.map(sample=>sample.mean),color:first.color,bold:true},(index,anchor)=>media.openFloating(index,anchor));
     }catch(error){$('momentsStatus').textContent=error.message;}
   };
 })(globalThis);

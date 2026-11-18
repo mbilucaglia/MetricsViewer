@@ -108,7 +108,7 @@
       slide.addImage({data:await svgData(background),x:0,y:page.chart.y*unit,w:page.chart.width*unit,h:page.chart.height*unit,objectName:'Grafico vettoriale'});
       for(const card of page.cards) {
         const color=hex(card.color),key='pip-'+card.index,radius=card.source.radius;
-        slide.addText(String(card.index+1),{shape:deck.ShapeType.ellipse,x:(card.source.x-radius)*unit,y:(page.header+card.source.y-radius)*unit,
+        slide.addText(String(card.rank??card.index+1),{shape:deck.ShapeType[({circle:'ellipse',square:'rect',triangle:'triangle',diamond:'diamond',hexagon:'hexagon'})[card.shape]??'ellipse']??deck.ShapeType.ellipse,x:(card.source.x-radius)*unit,y:(page.header+card.source.y-radius)*unit,
           w:radius*2*unit,h:radius*2*unit,fontFace:'Arial',fontSize:12*unit*72,color:'FFFFFF',bold:true,align:'center',valign:'mid',
           fill:{color},line:{color:'FFFFFF',width:1},margin:0,objectName:'point-'+card.index});
         slide.addShape(deck.ShapeType.roundRect,{x:card.x*unit,y:card.y*unit,w:card.width*unit,h:card.height*unit,
@@ -120,7 +120,7 @@
             y:(card.image.y+(card.image.height-height)/2)*unit,w:width*unit,h:height*unit,objectName:key+'-image'});
         } else slide.addText('Video non associato',{x:card.image.x*unit,y:card.image.y*unit,w:card.image.width*unit,h:card.image.height*unit,
           fontFace:'Arial',fontSize:13*unit*72,color:'686887',align:'center',valign:'mid',margin:0,objectName:key+'-missing'});
-        slide.addText(String(card.index+1),{shape:deck.ShapeType.ellipse,x:(card.x+9)*unit,y:(card.y+Math.min(card.captionHeight/2,24)-11)*unit,
+        slide.addText(String(card.rank??card.index+1),{shape:deck.ShapeType[({circle:'ellipse',square:'rect',triangle:'triangle',diamond:'diamond',hexagon:'hexagon'})[card.shape]??'ellipse']??deck.ShapeType.ellipse,x:(card.x+9)*unit,y:(card.y+Math.min(card.captionHeight/2,24)-11)*unit,
           w:22*unit,h:22*unit,fontFace:'Arial',fontSize:12*unit*72,color:'FFFFFF',bold:true,align:'center',valign:'mid',fill:{color},line:{color,transparency:100},margin:0,objectName:key+'-number'});
         slide.addText(card.lines.join('\n'),{x:(card.x+38)*unit,y:(card.y+8)*unit,w:(card.width-44)*unit,h:(card.captionHeight-10)*unit,
           fontFace:'Arial',fontSize:13*unit*72,color:'25234A',valign:'top',breakLine:false,margin:0,lineSpacingMultiple:1,objectName:key+'-caption'});

@@ -194,10 +194,10 @@
       $('videoAssignments').append(row);
     }
   }
-  function replaceAssignments(items){
-    stop();video.pause();video.removeAttribute('src');video.load();activeUrl=null;time=0;mediaFiles=[];
+  function replaceAssignments(items, library=[]){
+    stop();video.pause();video.removeAttribute('src');video.load();activeUrl=null;time=0;mediaFiles=library;
     for(const id of assignments.keys())release(id);
-    for(const item of items)assignments.set(item.epoch,{url:item.url,name:item.name,objectUrl:false,...(item.demoFile?{demoFile:item.demoFile}:{}),...(item.kind?{kind:item.kind}:{}),...(item.duration?{duration:item.duration}:{})});
+    for(const item of items)assignments.set(item.epoch,{url:item.url,name:item.name,objectUrl:Boolean(item.file),...(item.file?{file:item.file}:{}),...(item.demoFile?{demoFile:item.demoFile}:{}),...(item.kind?{kind:item.kind}:{}),...(item.duration?{duration:item.duration}:{})});
     assignmentEpochs=items.map(item=>item.epoch);activate();rows();
     document.dispatchEvent?.(new CustomEvent('metrics-video-changed'));
   }
@@ -213,6 +213,40 @@
     const url=global.MetricsDemoVideoData[item.demoFile];
     if(typeof url!=='string'||!url.startsWith('data:video/'))throw new Error('Video dimostrativo per l’esportazione non disponibile.');
     return {...item,url};
+  }
+  async function projectMedia() {
+    const files = [...new Set(mediaFiles)], links = [], position = time;
+    for (const [epoch,item] of assignments) {
+      let file = item.file;
+      if (!file) {
+        const source = await exportSource(epoch);
+        const response = await fetch(source.url);
+        if (!response.ok) throw new Error('Impossibile includere ' + item.name);
+        const blob = await response.blob();
+        file = new File([blob],item.name,{type:blob.type});
+      }
+      if (!files.includes(file)) files.push(file);
+      links.push({epoch, index:files.indexOf(file), duration:item.duration});
+    }
+    return {files, links, position};
+  }
+  function prepareProjectMedia(files, links) {
+    const valid = MetricsProject.requireValid;
+    valid(files.every(file => global.MetricsStaticMedia.kind(file)) && Array.isArray(links));
+    const items = links.map(link => {
+      valid(typeof link.epoch === 'string' && Number.isInteger(link.index) && files[link.index] &&
+        (link.duration === undefined || Number.isFinite(link.duration) && link.duration > 0));
+      const file = files[link.index];
+      return {epoch:link.epoch, file, name:file.name, kind:global.MetricsStaticMedia.kind(file), duration:link.duration};
+    });
+    valid(new Set(items.map(item => item.epoch)).size === items.length);
+    try {
+      for (const item of items) item.url = URL.createObjectURL(item.file);
+    } catch (error) {
+      for (const item of items) if (item.url) URL.revokeObjectURL(item.url);
+      throw error;
+    }
+    return () => replaceAssignments(items,files);
   }
   function setContext(epochs,current,mode,epochDurations={}){
     durations=epochDurations;
@@ -330,5 +364,5 @@
   }
   global.addEventListener('pagehide',()=>{video.pause();stop();});
   global.addEventListener('beforeunload',()=>{stop();for(const id of assignments.keys())release(id);});
-  global.MetricsVideo={setContext,replaceAssignments,attach,seek,pause:()=>video.pause(),source,exportSource,importFiles};
+  global.MetricsVideo={setContext,replaceAssignments,projectMedia,prepareProjectMedia,attach,seek,pause:()=>video.pause(),source,exportSource,importFiles};
 })(window);
